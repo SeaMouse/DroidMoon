@@ -23,42 +23,69 @@ const game = new Phaser.Game(config);
 let player;
 let cursors;
 let wasdKeys;
-let arrowKeys;
 let wallLayer;
 let enemies = [];
 let bullets;
-let rightStickReset = true;  // Tracks whether right stick has returned to centre
-let scene;  // Global reference to the Phaser scene
+let enemyGroup;           // Physics group so we can detect player-enemy collisions easily
+let rightStickReset = true;
+let scene;
 
-const TILE_SIZE    = 32;
-const ENEMY_SPEED  = 100;
-const PLAYER_SPEED = 200;
-const DETECT_RANGE = 200;
-const BULLET_SPEED = 400;
-const BULLET_COOLDOWN = 200;  // Milliseconds between shots
+// --- HUD ---
+let hudHearts = [];       // Array of heart image objects shown on screen
+let killText;             // Text showing how many enemies have been destroyed
+let killCount = 0;
 
-let lastShotTime = 0;  // Tracks when the player last fired
+// --- Player health ---
+let playerHP;
+const PLAYER_MAX_HP    = 3;
+let playerInvincible   = false;   // True during the brief grace period after a hit
+const INVINCIBILITY_MS = 1200;    // How long the grace period lasts (milliseconds)
 
+// --- Game state ---
+let gameOver = false;
+let gameOverText;
+let restartText;
+
+const TILE_SIZE       = 32;
+const ENEMY_SPEED     = 100;
+const PLAYER_SPEED    = 200;
+const DETECT_RANGE    = 200;
+const BULLET_SPEED    = 400;
+const BULLET_COOLDOWN = 200;
+
+let lastShotTime = 0;
+
+// hp: how many bullets the enemy can absorb before dying
 const enemyDefinitions = [
-    { startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2}  },
-    { startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17} },
-    { startTile: {x: 12, y: 8},  waypointA: {x: 12, y: 8},  waypointB: {x: 16, y: 8}  },
-    { startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10} },
+    { startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2},  hp: 1 },
+{ startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17}, hp: 1 },
+{ startTile: {x: 12, y: 8},  waypointA: {x: 12, y: 8},  waypointB: {x: 16, y: 8},  hp: 2 },
+{ startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10},  hp: 2 },
 ];
 
+// ─────────────────────────────────────────────
+//  PRELOAD
+// ─────────────────────────────────────────────
 function preload() {
     this.load.tilemapTiledJSON('level1', 'assets/level1.tmj');
     this.load.image('tiles', 'assets/poc_tiles.png');
 }
 
+// ─────────────────────────────────────────────
+//  CREATE
+// ─────────────────────────────────────────────
 function create() {
     scene = this;
+    gameOver = false;
+    playerHP = PLAYER_MAX_HP;
+    killCount = 0;
+    enemies = [];
 
-    // Remove all the tileGfx / generateTexture('tiles') block, and replace with:
-    const map = this.make.tilemap({ key: 'level1' });
-    const tileset = map.addTilesetImage('tiles', 'tiles');  // name in Tiled, then the image key
-    wallLayer = map.createLayer('Tile Layer 1', tileset, 0, 0);  // must match your layer name in Tiled
-    wallLayer.setCollision(1);  // tile index 1 = wall
+    // --- Tilemap ---
+    const map      = this.make.tilemap({ key: 'level1' });
+    const tileset  = map.addTilesetImage('tiles', 'tiles');
+    wallLayer      = map.createLayer('Tile Layer 1', tileset, 0, 0);
+    wallLayer.setCollision(1);
 
     // --- Player texture ---
     const playerGfx = this.add.graphics();
@@ -72,7 +99,6 @@ function create() {
     this.physics.add.collider(player, wallLayer);
 
     // --- Bullet texture ---
-    // A small bright yellow circle
     const bulletGfx = this.add.graphics();
     bulletGfx.fillStyle(0xffee00, 1);
     bulletGfx.fillCircle(4, 4, 4);
@@ -80,15 +106,11 @@ function create() {
     bulletGfx.destroy();
 
     // --- Bullet group ---
-    // A static pool of 20 bullets. 'runChildUpdate' means each bullet's
-    // update() method is called automatically every frame.
     bullets = this.physics.add.group({
         defaultKey: 'bullet',
             maxSize: 20,
             runChildUpdate: true
     });
-
-    // Bullets are stopped by walls
     this.physics.add.collider(bullets, wallLayer, bulletHitWall);
 
     // --- Enemy texture ---
@@ -98,6 +120,11 @@ function create() {
     enemyGfx.generateTexture('enemy', 32, 32);
     enemyGfx.destroy();
 
+    // --- Enemy group ---
+    // Having all enemy sprites in one group lets us detect
+    // player-enemy contact with a single overlap call.
+    enemyGroup = this.physics.add.group();
+
     // --- Spawn enemies ---
     for (const def of enemyDefinitions) {
         const startX = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
@@ -105,18 +132,23 @@ function create() {
         const sprite = this.physics.add.sprite(startX, startY, 'enemy');
         sprite.setCollideWorldBounds(true);
         this.physics.add.collider(sprite, wallLayer);
+        enemyGroup.add(sprite);
 
         enemies.push({
             sprite:    sprite,
             state:     'PATROL',
             waypointA: tileToPixel(def.waypointA),
-            waypointB: tileToPixel(def.waypointB),
-            target:    tileToPixel(def.waypointB),
+                     waypointB: tileToPixel(def.waypointB),
+                     target:    tileToPixel(def.waypointB),
+                     hp:        def.hp,   // ← enemy hit points stored here
         });
 
-        // Each enemy is hit by bullets
         this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
     }
+
+    // --- Player-enemy contact damage ---
+    // When the player touches any enemy sprite, playerTouchedEnemy is called.
+    this.physics.add.overlap(player, enemyGroup, playerTouchedByEnemy);
 
     // --- Camera ---
     const mapWidth  = map.widthInPixels;
@@ -126,21 +158,30 @@ function create() {
     this.cameras.main.startFollow(player, true, 0.08, 0.08);
 
     // --- Input ---
-    // WASD for movement, arrow keys for aiming/shooting
-    cursors = this.input.keyboard.createCursorKeys();
+    cursors  = this.input.keyboard.createCursorKeys();
     wasdKeys = this.input.keyboard.addKeys({
         up:    Phaser.Input.Keyboard.KeyCodes.W,
         down:  Phaser.Input.Keyboard.KeyCodes.S,
         left:  Phaser.Input.Keyboard.KeyCodes.A,
         right: Phaser.Input.Keyboard.KeyCodes.D
     });
+
+    // --- HUD ---
+    // Hearts and text are created after everything else so they draw on top.
+    createHUD(this);
 }
 
+// ─────────────────────────────────────────────
+//  UPDATE  (called every frame)
+// ─────────────────────────────────────────────
 function update(time) {
+    // Do nothing if the game is over
+    if (gameOver) { return; }
+
     player.setVelocity(0);
 
-    // --- Movement: WASD or gamepad left stick ---
-    const pad = this.input.gamepad.getPad(0);
+    // --- Movement ---
+    const pad       = this.input.gamepad.getPad(0);
     const DEAD_ZONE = 0.15;
 
     if (wasdKeys.left.isDown)  { player.setVelocityX(-PLAYER_SPEED); }
@@ -157,22 +198,18 @@ function update(time) {
     let aimX = 0;
     let aimY = 0;
 
-    // Keyboard arrow keys — behaviour unchanged
     if (cursors.left.isDown)  { aimX = -1; }
     if (cursors.right.isDown) { aimX =  1; }
     if (cursors.up.isDown)    { aimY = -1; }
     if (cursors.down.isDown)  { aimY =  1; }
 
     if (pad) {
-        const RSX = pad.rightStick.x;
-        const RSY = pad.rightStick.y;
+        const RSX      = pad.rightStick.x;
+        const RSY      = pad.rightStick.y;
         const stickOut = Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE;
-
         if (!stickOut) {
-            // Stick is at centre — mark it as reset and ready to fire again
             rightStickReset = true;
         } else if (rightStickReset) {
-            // Stick is pushed out AND has been reset since the last shot
             aimX = RSX;
             aimY = RSY;
         }
@@ -181,7 +218,7 @@ function update(time) {
     if ((aimX !== 0 || aimY !== 0) && time > lastShotTime + BULLET_COOLDOWN) {
         fireBullet(player.x, player.y, aimX, aimY);
         lastShotTime = time;
-        rightStickReset = false;  // Block further shots until stick returns to centre
+        rightStickReset = false;
     }
 
     // --- Enemy AI ---
@@ -190,7 +227,136 @@ function update(time) {
     }
 }
 
-// --- Fire a bullet from (x,y) in direction (dx,dy) ---
+// ─────────────────────────────────────────────
+//  HUD
+// ─────────────────────────────────────────────
+
+// Build the heart icons and kill counter text.
+// setScrollFactor(0) pins objects to the screen, not the world.
+function createHUD(scene) {
+    // --- Heart textures ---
+    // Full heart = bright red, empty heart = dark grey
+    const fullGfx = scene.add.graphics();
+    fullGfx.fillStyle(0xff2244, 1);
+    fullGfx.fillCircle(10, 10, 10);
+    fullGfx.generateTexture('heart_full', 20, 20);
+    fullGfx.destroy();
+
+    const emptyGfx = scene.add.graphics();
+    emptyGfx.fillStyle(0x444455, 1);
+    emptyGfx.fillCircle(10, 10, 10);
+    emptyGfx.generateTexture('heart_empty', 20, 20);
+    emptyGfx.destroy();
+
+    // --- Draw one icon per possible HP ---
+    hudHearts = [];
+    for (let i = 0; i < PLAYER_MAX_HP; i++) {
+        // 16px from the left edge, 24px from the top, spaced 28px apart
+        const heart = scene.add.image(16 + i * 28, 24, 'heart_full');
+        heart.setScrollFactor(0);   // ← stays fixed on screen
+        heart.setDepth(10);         // ← always drawn on top of game objects
+        hudHearts.push(heart);
+    }
+
+    // --- Kill counter ---
+    killText = scene.add.text(16, 48, 'Destroyed: 0', {
+        fontFamily: 'monospace',
+        fontSize:   '14px',
+        fill:       '#aaffcc'
+    });
+    killText.setScrollFactor(0);
+    killText.setDepth(10);
+}
+
+// Call this whenever playerHP or killCount changes.
+function updateHUD() {
+    for (let i = 0; i < hudHearts.length; i++) {
+        // Hearts at index < playerHP are full; the rest are empty
+        hudHearts[i].setTexture(i < playerHP ? 'heart_full' : 'heart_empty');
+    }
+    killText.setText('Destroyed: ' + killCount);
+}
+
+// ─────────────────────────────────────────────
+//  PLAYER DAMAGE
+// ─────────────────────────────────────────────
+
+// Called by Phaser whenever the player sprite overlaps an enemy sprite.
+function playerTouchedByEnemy(playerSprite, enemySprite) {
+    // Ignore if already in the invincibility window
+    if (playerInvincible) { return; }
+
+    playerHP--;
+    updateHUD();
+
+    if (playerHP <= 0) {
+        triggerGameOver();
+        return;
+    }
+
+    // --- Brief invincibility + visual flash ---
+    playerInvincible = true;
+
+    // Tween makes the player flicker so you know you've been hit
+    scene.tweens.add({
+        targets:    playerSprite,
+        alpha:      0.2,
+        duration:   100,
+        yoyo:       true,       // ping-pong between alpha 1 and 0.2
+        repeat:     5,          // flicker 5 times
+        onComplete: () => { playerSprite.setAlpha(1); }
+    });
+
+    // After the grace period, the player can be hit again
+    scene.time.delayedCall(INVINCIBILITY_MS, () => {
+        playerInvincible = false;
+    });
+}
+
+// ─────────────────────────────────────────────
+//  GAME OVER
+// ─────────────────────────────────────────────
+function triggerGameOver() {
+    gameOver = true;
+    player.setVelocity(0);
+    player.setAlpha(0.3);
+
+    // Stop all enemies moving
+    for (const enemy of enemies) {
+        enemy.sprite.setVelocity(0);
+    }
+
+    // --- Game over text, centred on screen ---
+    // The camera may have scrolled, so we use the camera's current scroll
+    // position to work out the centre of the visible screen.
+    const camX = scene.cameras.main.scrollX;
+    const camY = scene.cameras.main.scrollY;
+    const cx    = camX + 400;   // 400 = half of 800px viewport width
+    const cy    = camY + 300;   // 300 = half of 600px viewport height
+
+    gameOverText = scene.add.text(cx, cy - 40, 'GAME OVER', {
+        fontFamily: 'monospace',
+        fontSize:   '48px',
+        fill:       '#ff2244',
+        stroke:     '#000000',
+        strokeThickness: 4
+    }).setOrigin(0.5).setDepth(20);
+
+    restartText = scene.add.text(cx, cy + 20, 'Press R to restart', {
+        fontFamily: 'monospace',
+        fontSize:   '20px',
+        fill:       '#ffffff'
+    }).setOrigin(0.5).setDepth(20);
+
+    // Listen for R key to restart the whole scene
+    scene.input.keyboard.once('keydown-R', () => {
+        scene.scene.restart();
+    });
+}
+
+// ─────────────────────────────────────────────
+//  BULLETS
+// ─────────────────────────────────────────────
 function fireBullet(x, y, dx, dy) {
     const bullet = bullets.get(x, y, 'bullet');
     if (!bullet) { return; }
@@ -198,33 +364,54 @@ function fireBullet(x, y, dx, dy) {
     bullet.setActive(true);
     bullet.setVisible(true);
     bullet.body.enable = true;
-    bullet.body.reset(x, y);  // ← sync body position to the new spawn point
+    bullet.body.reset(x, y);
 
     const angle = Math.atan2(dy, dx);
     bullet.setVelocityX(Math.cos(angle) * BULLET_SPEED);
     bullet.setVelocityY(Math.sin(angle) * BULLET_SPEED);
 }
 
-// --- Called when a bullet overlaps a wall ---
 function bulletHitWall(bullet) {
     deactivateBullet(bullet);
 }
 
-// --- Called when a bullet overlaps an enemy ---
-function bulletHitEnemy(enemySprite, bullet) {  // ← swapped
+// Called when a bullet overlaps an enemy sprite.
+// Note: Phaser passes arguments in the same order as physics.add.overlap(A, B, ...)
+// so here the first arg is from 'bullets' and the second is the enemy sprite.
+function bulletHitEnemy(enemySprite, bullet) {
     deactivateBullet(bullet);
-    enemies = enemies.filter(e => e.sprite !== enemySprite);
 
-    enemySprite.setActive(false);
-    enemySprite.setVisible(false);
-    enemySprite.body.enable = false;
+    // Find the data object that owns this sprite
+    const enemy = enemies.find(e => e.sprite === enemySprite);
+    if (!enemy) { return; }
 
-    scene.time.delayedCall(100, () => {
-        enemySprite.destroy();
-    });
+    enemy.hp--;
+
+    if (enemy.hp <= 0) {
+        // Remove from the tracking array so updateEnemy no longer runs on it
+        enemies = enemies.filter(e => e !== enemy);
+
+        enemySprite.setActive(false);
+        enemySprite.setVisible(false);
+        enemySprite.body.enable = false;
+
+        killCount++;
+        updateHUD();
+
+        scene.time.delayedCall(100, () => {
+            enemySprite.destroy();
+        });
+    } else {
+        // Flash white briefly to show a hit that didn't kill
+        scene.tweens.add({
+            targets:  enemySprite,
+            alpha:    0.3,
+            duration: 60,
+            yoyo:     true
+        });
+    }
 }
 
-// --- Return a bullet to the pool ---
 function deactivateBullet(bullet) {
     bullet.setActive(false);
     bullet.setVisible(false);
@@ -232,7 +419,9 @@ function deactivateBullet(bullet) {
     bullet.body.enable = false;
 }
 
-// --- Helper: tile coordinates to pixel centre ---
+// ─────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────
 function tileToPixel(tileCoord) {
     return {
         x: tileCoord.x * TILE_SIZE + TILE_SIZE / 2,
@@ -240,22 +429,23 @@ function tileToPixel(tileCoord) {
     };
 }
 
-// --- Line of sight check ---
 function hasLineOfSight(x1, y1, x2, y2) {
     const dist  = Phaser.Math.Distance.Between(x1, y1, x2, y2);
     const steps = Math.ceil(dist / 16);
 
     for (let i = 1; i < steps; i++) {
-        const t = i / steps;
+        const t       = i / steps;
         const sampleX = x1 + (x2 - x1) * t;
         const sampleY = y1 + (y2 - y1) * t;
-        const tile = wallLayer.getTileAtWorldXY(sampleX, sampleY);
+        const tile    = wallLayer.getTileAtWorldXY(sampleX, sampleY);
         if (tile && tile.index === 1) { return false; }
     }
     return true;
 }
 
-// --- Enemy state machine ---
+// ─────────────────────────────────────────────
+//  ENEMY STATE MACHINE
+// ─────────────────────────────────────────────
 function updateEnemy(enemy) {
     const sprite = enemy.sprite;
 
