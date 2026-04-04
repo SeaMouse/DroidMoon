@@ -31,15 +31,22 @@ let rightStickReset = true;
 let scene;
 
 // --- HUD ---
-let hudHearts = [];       // Array of heart image objects shown on screen
+let energyBarFill;        // The coloured rectangle that shrinks as energy falls
 let killText;             // Text showing how many enemies have been destroyed
 let killCount = 0;
 
-// --- Player health ---
-let playerHP;
-const PLAYER_MAX_HP    = 3;
-let playerInvincible   = false;   // True during the brief grace period after a hit
-const INVINCIBILITY_MS = 1200;    // How long the grace period lasts (milliseconds)
+// --- Player energy ---
+let playerEnergy;
+const PLAYER_MAX_ENERGY = 100;
+const ENERGY_BAR_WIDTH  = 150;    // Pixel width of a full bar
+const ENERGY_BAR_HEIGHT = 14;
+let playerInvincible    = false;  // True during the brief grace period after a hit
+const INVINCIBILITY_MS  = 1200;   // How long the grace period lasts (milliseconds)
+
+// --- Damage values ---
+// How much energy different things cost the player.
+// contactDamage for each enemy is set in enemyDefinitions below.
+const ENEMY_BULLET_DAMAGE = 20;   // Ready for when enemies shoot back
 
 // --- Game state ---
 let gameOver = false;
@@ -55,12 +62,13 @@ const BULLET_COOLDOWN = 200;
 
 let lastShotTime = 0;
 
-// hp: how many bullets the enemy can absorb before dying
+// hp:            bullet hits needed to destroy this enemy
+// contactDamage: energy drained when the player bumps into it
 const enemyDefinitions = [
-    { startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2},  hp: 1 },
-{ startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17}, hp: 1 },
-{ startTile: {x: 12, y: 8},  waypointA: {x: 12, y: 8},  waypointB: {x: 16, y: 8},  hp: 2 },
-{ startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10},  hp: 2 },
+    { startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2},  hp: 1, contactDamage:  8 },
+{ startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17}, hp: 1, contactDamage:  8 },
+{ startTile: {x: 12, y: 8},  waypointA: {x: 12, y: 8},  waypointB: {x: 16, y: 8},  hp: 2, contactDamage: 18 },
+{ startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10},  hp: 2, contactDamage: 18 },
 ];
 
 // ─────────────────────────────────────────────
@@ -77,7 +85,7 @@ function preload() {
 function create() {
     scene = this;
     gameOver = false;
-    playerHP = PLAYER_MAX_HP;
+    playerEnergy = PLAYER_MAX_ENERGY;
     killCount = 0;
     enemies = [];
 
@@ -135,12 +143,13 @@ function create() {
         enemyGroup.add(sprite);
 
         enemies.push({
-            sprite:    sprite,
-            state:     'PATROL',
-            waypointA: tileToPixel(def.waypointA),
-                     waypointB: tileToPixel(def.waypointB),
-                     target:    tileToPixel(def.waypointB),
-                     hp:        def.hp,   // ← enemy hit points stored here
+            sprite:        sprite,
+            state:         'PATROL',
+            waypointA:     tileToPixel(def.waypointA),
+                     waypointB:     tileToPixel(def.waypointB),
+                     target:        tileToPixel(def.waypointB),
+                     hp:            def.hp,
+                     contactDamage: def.contactDamage,
         });
 
         this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
@@ -231,49 +240,57 @@ function update(time) {
 //  HUD
 // ─────────────────────────────────────────────
 
-// Build the heart icons and kill counter text.
-// setScrollFactor(0) pins objects to the screen, not the world.
+// Build the energy bar and kill counter.
+// setScrollFactor(0) pins everything to the screen, not the world.
 function createHUD(scene) {
-    // --- Heart textures ---
-    // Full heart = bright red, empty heart = dark grey
-    const fullGfx = scene.add.graphics();
-    fullGfx.fillStyle(0xff2244, 1);
-    fullGfx.fillCircle(10, 10, 10);
-    fullGfx.generateTexture('heart_full', 20, 20);
-    fullGfx.destroy();
+    const BAR_X = 12;   // Left edge of the bar on screen
+    const BAR_Y = 12;   // Top edge of the bar on screen
 
-    const emptyGfx = scene.add.graphics();
-    emptyGfx.fillStyle(0x444455, 1);
-    emptyGfx.fillCircle(10, 10, 10);
-    emptyGfx.generateTexture('heart_empty', 20, 20);
-    emptyGfx.destroy();
+    // --- Label ---
+    scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
+        fontFamily: 'monospace',
+        fontSize:   '10px',
+        fill:       '#aaffcc'
+    }).setScrollFactor(0).setDepth(10);
 
-    // --- Draw one icon per possible HP ---
-    hudHearts = [];
-    for (let i = 0; i < PLAYER_MAX_HP; i++) {
-        // 16px from the left edge, 24px from the top, spaced 28px apart
-        const heart = scene.add.image(16 + i * 28, 24, 'heart_full');
-        heart.setScrollFactor(0);   // ← stays fixed on screen
-        heart.setDepth(10);         // ← always drawn on top of game objects
-        hudHearts.push(heart);
-    }
+    // --- Background track (dark rectangle, always full width) ---
+    const barBg = scene.add.graphics();
+    barBg.fillStyle(0x222233, 1);
+    barBg.fillRect(BAR_X, BAR_Y + 12, ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT);
+    barBg.setScrollFactor(0).setDepth(10);
+
+    // --- Coloured fill (width shrinks as energy falls) ---
+    // We store this as a global so updateHUD() can redraw it each hit.
+    energyBarFill = scene.add.graphics();
+    energyBarFill.setScrollFactor(0).setDepth(11);
 
     // --- Kill counter ---
-    killText = scene.add.text(16, 48, 'Destroyed: 0', {
+    killText = scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
         fontFamily: 'monospace',
-        fontSize:   '14px',
+        fontSize:   '12px',
         fill:       '#aaffcc'
     });
-    killText.setScrollFactor(0);
-    killText.setDepth(10);
+    killText.setScrollFactor(0).setDepth(10);
+
+    // Draw the bar at full energy to start
+    updateHUD();
 }
 
-// Call this whenever playerHP or killCount changes.
+// Redraws the energy bar fill and updates the kill counter text.
+// Call this whenever playerEnergy or killCount changes.
 function updateHUD() {
-    for (let i = 0; i < hudHearts.length; i++) {
-        // Hearts at index < playerHP are full; the rest are empty
-        hudHearts[i].setTexture(i < playerHP ? 'heart_full' : 'heart_empty');
-    }
+    const pct = playerEnergy / PLAYER_MAX_ENERGY;  // 0.0 → 1.0
+
+    // Colour shifts: green above 50%, yellow 25–50%, red below 25%
+    let colour;
+    if      (pct > 0.5) { colour = 0x00dd55; }
+    else if (pct > 0.25){ colour = 0xffcc00; }
+    else                { colour = 0xff2244; }
+
+    energyBarFill.clear();
+    energyBarFill.fillStyle(colour, 1);
+    energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
+
     killText.setText('Destroyed: ' + killCount);
 }
 
@@ -286,10 +303,14 @@ function playerTouchedByEnemy(playerSprite, enemySprite) {
     // Ignore if already in the invincibility window
     if (playerInvincible) { return; }
 
-    playerHP--;
+    // Look up how much damage this particular enemy deals
+    const enemy = enemies.find(e => e.sprite === enemySprite);
+    const damage = enemy ? enemy.contactDamage : 10;
+
+    playerEnergy = Math.max(0, playerEnergy - damage);
     updateHUD();
 
-    if (playerHP <= 0) {
+    if (playerEnergy <= 0) {
         triggerGameOver();
         return;
     }
