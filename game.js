@@ -3,6 +3,7 @@ const config = {
     width: 800,
     height: 600,
     backgroundColor: '#1a1a2e',
+    pixelArt: true,
     physics: {
         default: 'arcade',
             arcade: { debug: false }
@@ -38,29 +39,6 @@ const BULLET_COOLDOWN = 200;  // Milliseconds between shots
 
 let lastShotTime = 0;  // Tracks when the player last fired
 
-const levelData = [
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,1],
-    [1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1],
-    [1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1],
-    [1,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-    ];
-
 const enemyDefinitions = [
     { startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2}  },
     { startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17} },
@@ -68,28 +46,19 @@ const enemyDefinitions = [
     { startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10} },
 ];
 
-function preload() {}
+function preload() {
+    this.load.tilemapTiledJSON('level1', 'assets/level1.tmj');
+    this.load.image('tiles', 'assets/poc_tiles.png');
+}
 
 function create() {
     scene = this;
-    // --- Tile textures ---
-    const tileGfx = this.add.graphics();
-    tileGfx.fillStyle(0x0d1b2a, 1);
-    tileGfx.fillRect(0, 0, 32, 32);
-    tileGfx.fillStyle(0x1a2f45, 1);
-    tileGfx.fillRect(31, 31, 1, 1);
-    tileGfx.fillStyle(0x2c3e6b, 1);
-    tileGfx.fillRect(32, 0, 32, 32);
-    tileGfx.fillStyle(0x3d5491, 1);
-    tileGfx.fillRect(34, 2, 28, 28);
-    tileGfx.generateTexture('tiles', 64, 32);
-    tileGfx.destroy();
 
-    // --- Tilemap ---
-    const map = this.make.tilemap({ data: levelData, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
-    const tileset = map.addTilesetImage('tiles');
-    wallLayer = map.createLayer(0, tileset, 0, 0);
-    wallLayer.setCollision(1);
+    // Remove all the tileGfx / generateTexture('tiles') block, and replace with:
+    const map = this.make.tilemap({ key: 'level1' });
+    const tileset = map.addTilesetImage('tiles', 'tiles');  // name in Tiled, then the image key
+    wallLayer = map.createLayer('Tile Layer 1', tileset, 0, 0);  // must match your layer name in Tiled
+    wallLayer.setCollision(1);  // tile index 1 = wall
 
     // --- Player texture ---
     const playerGfx = this.add.graphics();
