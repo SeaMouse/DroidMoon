@@ -25,26 +25,24 @@ let cursors;
 let wasdKeys;
 let wallLayer;
 let enemies = [];
-let bullets;
-let enemyGroup;           // Physics group so we can detect player-enemy collisions easily
+let bullets;          // player bullets
+let enemyBullets;     // enemy bullets — separate group so overlaps are unambiguous
+let enemyGroup;
 let rightStickReset = true;
 let scene;
 
 // --- HUD ---
-let energyBarFill;        // The coloured rectangle that shrinks as energy falls
-let killText;             // Text showing how many enemies have been destroyed
+let energyBarFill;
+let killText;
 let killCount = 0;
 
 // --- Player energy ---
 let playerEnergy;
 const PLAYER_MAX_ENERGY = 100;
-const ENERGY_BAR_WIDTH  = 150;    // Pixel width of a full bar
+const ENERGY_BAR_WIDTH  = 150;
 const ENERGY_BAR_HEIGHT = 14;
-let playerInvincible    = false;  // True during the brief grace period after a hit
-const INVINCIBILITY_MS  = 1200;   // How long the grace period lasts (milliseconds)
-
-// --- Damage values ---
-const ENEMY_BULLET_DAMAGE = 20;   // Damage dealt when an enemy bullet hits the player
+let playerInvincible    = false;
+const INVINCIBILITY_MS  = 1200;
 
 // --- Game state ---
 let gameOver = false;
@@ -59,25 +57,44 @@ const BULLET_COOLDOWN = 200;
 let lastShotTime = 0;
 
 // ─────────────────────────────────────────────
+//  WEAPON TYPE CATALOGUE
+// ─────────────────────────────────────────────
+// Defines the properties of each ranged weapon an enemy can carry.
+// enemyTypes references these by name via the weaponType field.
+//
+//   cooldown    - milliseconds between shots
+//   bulletSpeed - pixels per second
+//   damage      - player energy lost per hit
+//   colour      - hex colour of this weapon's bullet sprite
+//
+const weaponTypes = {
+    blaster: {
+        cooldown:    1500,
+        bulletSpeed: 350,
+        damage:      20,
+        colour:      0xff4444,   // red
+    },
+    heavy_blaster: {
+        cooldown:    2800,
+        bulletSpeed: 280,        // slower but hits harder
+        damage:      35,
+        colour:      0xff00ff,   // magenta
+    },
+};
+
+// ─────────────────────────────────────────────
 //  ENEMY TYPE CATALOGUE
 // ─────────────────────────────────────────────
-// This is the master list of every robot class in the game.
-// To add a new type, add an entry here — nothing else needs changing.
+// Master list of every robot class.
 //
-// Fields:
-//   label        - human-readable name (used in future UI / debug)
+//   label        - human-readable name
 //   colour       - hex colour for the procedurally-generated sprite
-//   speed        - movement speed in pixels per second
-//   detectRange  - how close the player must be (in pixels) before this
-//                  robot notices them and switches from PATROL to CHASE
-//   hp           - number of bullet hits needed to destroy
-//   contactDamage- player energy lost when bumping into this robot
-//   weaponType   - null (unarmed) or a string naming the weapon.
-//                  Unarmed robots flee or ignore the player when chasing;
-//                  armed robots will shoot (logic added in a later step).
-//                  Weapon strings defined so far:
-//                    'blaster'       — single shot, moderate fire rate
-//                    'heavy_blaster' — single shot, slow fire rate, more damage
+//   speed        - patrol speed in pixels per second
+//   detectRange  - distance (pixels) at which an armed enemy opens fire;
+//                  unarmed enemies ignore this field
+//   hp           - bullet hits needed to destroy
+//   contactDamage- player energy lost on physical contact
+//   weaponType   - null (unarmed) or a key from weaponTypes above
 //
 const enemyTypes = {
 
@@ -86,7 +103,7 @@ const enemyTypes = {
         label:         'Cleaning Bot',
         colour:        0x88ccff,   // pale blue
         speed:         55,
-        detectRange:   80,         // barely notices the player
+        detectRange:   0,          // unarmed — field unused
         hp:            1,
         contactDamage: 5,
         weaponType:    null,
@@ -97,17 +114,17 @@ const enemyTypes = {
         label:         'Patrol Drone',
         colour:        0xff8800,   // orange
         speed:         100,
-        detectRange:   180,
+        detectRange:   0,          // unarmed — rams on contact only
         hp:            2,
         contactDamage: 10,
-        weaponType:    null,       // rams the player, no ranged attack
+        weaponType:    null,
     },
 
     security_light: {
         label:         'Security Droid (Light)',
         colour:        0xff3300,   // red-orange
         speed:         120,
-        detectRange:   220,
+        detectRange:   220,        // shooting range in pixels
         hp:            2,
         contactDamage: 15,
         weaponType:    'blaster',
@@ -117,7 +134,7 @@ const enemyTypes = {
     security_heavy: {
         label:         'Security Droid (Heavy)',
         colour:        0xcc00ff,   // purple
-        speed:         75,         // slower but very tough
+        speed:         75,
         detectRange:   260,
         hp:            4,
         contactDamage: 25,
@@ -126,16 +143,8 @@ const enemyTypes = {
 };
 
 // ─────────────────────────────────────────────
-//  LEVEL LAYOUT  — enemy placements
+//  LEVEL LAYOUT — enemy placements
 // ─────────────────────────────────────────────
-// Each entry says which type to spawn and where it patrols.
-// All stats come from enemyTypes above; nothing is duplicated here.
-//
-//   type       - must match a key in enemyTypes exactly
-//   startTile  - tile the robot spawns on
-//   waypointA  - first patrol waypoint (tile coordinates)
-//   waypointB  - second patrol waypoint (tile coordinates)
-//
 const enemyDefinitions = [
     { type: 'cleaner',        startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2}  },
 { type: 'cleaner',        startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17} },
@@ -178,24 +187,39 @@ function create() {
     player.setCollideWorldBounds(true);
     this.physics.add.collider(player, wallLayer);
 
-    // --- Bullet texture ---
+    // --- Player bullet texture ---
     const bulletGfx = this.add.graphics();
     bulletGfx.fillStyle(0xffee00, 1);
     bulletGfx.fillCircle(4, 4, 4);
     bulletGfx.generateTexture('bullet', 8, 8);
     bulletGfx.destroy();
 
-    // --- Bullet group ---
+    // --- Player bullet group ---
     bullets = this.physics.add.group({
-        defaultKey: 'bullet',
-            maxSize: 20,
-            runChildUpdate: true
+        defaultKey:      'bullet',
+            maxSize:         20,
+            runChildUpdate:  true
     });
     this.physics.add.collider(bullets, wallLayer, bulletHitWall);
 
-    // --- Generate one texture per enemy type ---
-    // We only need to do this once.  Each texture is named after its type key
-    // (e.g. 'cleaner', 'security_light') so sprites can reference it by name.
+    // --- Enemy bullet textures (one per weapon type, each its own colour) ---
+    for (const [weaponKey, weaponDef] of Object.entries(weaponTypes)) {
+        const gfx = this.add.graphics();
+        gfx.fillStyle(weaponDef.colour, 1);
+        gfx.fillCircle(4, 4, 4);
+        gfx.generateTexture('ebullet_' + weaponKey, 8, 8);
+        gfx.destroy();
+    }
+
+    // --- Enemy bullet group ---
+    enemyBullets = this.physics.add.group({
+        maxSize:        60,
+        runChildUpdate: true
+    });
+    this.physics.add.collider(enemyBullets, wallLayer, enemyBulletHitWall);
+    this.physics.add.overlap(player, enemyBullets, playerHitByEnemyBullet);
+
+    // --- Enemy sprite textures (one per type) ---
     for (const [typeKey, typeDef] of Object.entries(enemyTypes)) {
         const gfx = this.add.graphics();
         gfx.fillStyle(typeDef.colour, 1);
@@ -209,42 +233,33 @@ function create() {
 
     // --- Spawn enemies ---
     for (const def of enemyDefinitions) {
-
-        // Look up this placement's type in the catalogue.
-        // If the type string is wrong, warn the developer clearly.
         const typeDef = enemyTypes[def.type];
         if (!typeDef) {
-            console.warn(`Unknown enemy type "${def.type}" in enemyDefinitions — skipping.`);
+            console.warn(`Unknown enemy type "${def.type}" — skipping.`);
             continue;
         }
 
         const startX = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
         const startY = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
 
-        // Use the type key as the texture name (generated above)
         const sprite = this.physics.add.sprite(startX, startY, def.type);
         sprite.setCollideWorldBounds(true);
         this.physics.add.collider(sprite, wallLayer);
         enemyGroup.add(sprite);
 
-        // Build the live enemy object by copying stats from the type catalogue.
-        // This is the object the game logic works with at runtime.
         enemies.push({
             sprite:        sprite,
-            typeName:      def.type,          // handy for debugging
+            typeName:      def.type,
             label:         typeDef.label,
-            state:         'PATROL',
             waypointA:     tileToPixel(def.waypointA),
                      waypointB:     tileToPixel(def.waypointB),
                      target:        tileToPixel(def.waypointB),
-                     // --- stats copied from the type ---
                      hp:            typeDef.hp,
                      contactDamage: typeDef.contactDamage,
                      speed:         typeDef.speed,
                      detectRange:   typeDef.detectRange,
                      weaponType:    typeDef.weaponType,
-                     // --- per-instance shooting state (used when weaponType != null) ---
-                     lastShotTime:  0,
+                     lastShotTime:  0,   // each enemy tracks its own shot cooldown
         });
 
         this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
@@ -281,7 +296,7 @@ function update(time) {
 
     player.setVelocity(0);
 
-    // --- Movement ---
+    // --- Player movement ---
     const pad       = this.input.gamepad.getPad(0);
     const DEAD_ZONE = 0.15;
 
@@ -295,7 +310,7 @@ function update(time) {
         if (Math.abs(pad.leftStick.y) > DEAD_ZONE) { player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
     }
 
-    // --- Aiming and shooting ---
+    // --- Player aiming and shooting ---
     let aimX = 0;
     let aimY = 0;
 
@@ -375,13 +390,31 @@ function updateHUD() {
 }
 
 // ─────────────────────────────────────────────
-//  PLAYER DAMAGE
+//  PLAYER DAMAGE — contact
 // ─────────────────────────────────────────────
 function playerTouchedByEnemy(playerSprite, enemySprite) {
-    if (playerInvincible) { return; }
-
     const enemy  = enemies.find(e => e.sprite === enemySprite);
     const damage = enemy ? enemy.contactDamage : 10;
+    applyDamageToPlayer(damage);
+}
+
+// ─────────────────────────────────────────────
+//  PLAYER DAMAGE — enemy bullets
+// ─────────────────────────────────────────────
+function playerHitByEnemyBullet(playerSprite, bullet) {
+    // The damage value was stored on the bullet at the moment it was fired
+    const damage = bullet.getData('damage') ?? 20;
+    deactivateEnemyBullet(bullet);
+    applyDamageToPlayer(damage);
+}
+
+// ─────────────────────────────────────────────
+//  PLAYER DAMAGE — shared logic
+// ─────────────────────────────────────────────
+// Both contact damage and bullet damage funnel here so the invincibility
+// window, flash tween, and game-over check are never duplicated.
+function applyDamageToPlayer(damage) {
+    if (playerInvincible) { return; }
 
     playerEnergy = Math.max(0, playerEnergy - damage);
     updateHUD();
@@ -394,12 +427,12 @@ function playerTouchedByEnemy(playerSprite, enemySprite) {
     playerInvincible = true;
 
     scene.tweens.add({
-        targets:    playerSprite,
+        targets:    player,
         alpha:      0.2,
         duration:   100,
         yoyo:       true,
         repeat:     5,
-        onComplete: () => { playerSprite.setAlpha(1); }
+        onComplete: () => { player.setAlpha(1); }
     });
 
     scene.time.delayedCall(INVINCIBILITY_MS, () => {
@@ -444,7 +477,7 @@ function triggerGameOver() {
 }
 
 // ─────────────────────────────────────────────
-//  BULLETS
+//  PLAYER BULLETS
 // ─────────────────────────────────────────────
 function fireBullet(x, y, dx, dy) {
     const bullet = bullets.get(x, y, 'bullet');
@@ -503,6 +536,48 @@ function deactivateBullet(bullet) {
 }
 
 // ─────────────────────────────────────────────
+//  ENEMY BULLETS
+// ─────────────────────────────────────────────
+// Fires one bullet from the enemy toward the player's current position.
+// The bullet's damage is baked in as Phaser "data" so playerHitByEnemyBullet
+// can read it without any extra lookup.
+function enemyShoot(enemy, time) {
+    const weaponDef = weaponTypes[enemy.weaponType];
+    if (!weaponDef) { return; }
+
+    // Each enemy has its own timer so they don't all fire simultaneously
+    if (time < enemy.lastShotTime + weaponDef.cooldown) { return; }
+    enemy.lastShotTime = time;
+
+    const textureKey = 'ebullet_' + enemy.weaponType;
+    const bullet     = enemyBullets.get(enemy.sprite.x, enemy.sprite.y, textureKey);
+    if (!bullet) { return; }   // pool exhausted — skip this shot silently
+
+    bullet.setActive(true);
+    bullet.setVisible(true);
+    bullet.body.enable = true;
+    bullet.body.reset(enemy.sprite.x, enemy.sprite.y);
+    bullet.setData('damage', weaponDef.damage);
+
+    const angle = Phaser.Math.Angle.Between(
+        enemy.sprite.x, enemy.sprite.y, player.x, player.y
+    );
+    bullet.setVelocityX(Math.cos(angle) * weaponDef.bulletSpeed);
+    bullet.setVelocityY(Math.sin(angle) * weaponDef.bulletSpeed);
+}
+
+function enemyBulletHitWall(bullet) {
+    deactivateEnemyBullet(bullet);
+}
+
+function deactivateEnemyBullet(bullet) {
+    bullet.setActive(false);
+    bullet.setVisible(false);
+    bullet.setVelocity(0);
+    bullet.body.enable = false;
+}
+
+// ─────────────────────────────────────────────
 //  HELPERS
 // ─────────────────────────────────────────────
 function tileToPixel(tileCoord) {
@@ -527,57 +602,40 @@ function hasLineOfSight(x1, y1, x2, y2) {
 }
 
 // ─────────────────────────────────────────────
-//  ENEMY STATE MACHINE
+//  ENEMY AI  (patrol + ranged attack)
 // ─────────────────────────────────────────────
-// 'time' is passed in from update() so that armed enemies can
-// track their own shot cooldown independently of each other.
 function updateEnemy(enemy, time) {
     const sprite = enemy.sprite;
 
-    const distToPlayer = Phaser.Math.Distance.Between(
-        sprite.x, sprite.y, player.x, player.y
-    );
-
+    // ── Visibility ──────────────────────────────────────────────────────
+    // Only draw enemies the player has line of sight to.
     const los = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
     sprite.setVisible(los);
 
-    // Each enemy type has its own detectRange, so a cleaner bot won't
-    // react until the player is almost on top of it, while a heavy
-    // security droid spots the player from much further away.
-    if (los && distToPlayer < enemy.detectRange) {
-        enemy.state = 'CHASE';
-    } else {
-        enemy.state = 'PATROL';
+    // ── Patrol ──────────────────────────────────────────────────────────
+    // Enemies always walk their waypoint route — they never chase.
+    const distToTarget = Phaser.Math.Distance.Between(
+        sprite.x, sprite.y, enemy.target.x, enemy.target.y
+    );
+    if (distToTarget < 4) {
+        enemy.target = (enemy.target === enemy.waypointA)
+        ? enemy.waypointB : enemy.waypointA;
     }
+    const patrolAngle = Phaser.Math.Angle.Between(
+        sprite.x, sprite.y, enemy.target.x, enemy.target.y
+    );
+    sprite.setVelocityX(Math.cos(patrolAngle) * enemy.speed);
+    sprite.setVelocityY(Math.sin(patrolAngle) * enemy.speed);
 
-    if (enemy.state === 'CHASE') {
-        const angle = Phaser.Math.Angle.Between(sprite.x, sprite.y, player.x, player.y);
-        sprite.setVelocityX(Math.cos(angle) * enemy.speed);
-        sprite.setVelocityY(Math.sin(angle) * enemy.speed);
-
-        // ── Placeholder: armed enemy shooting ────────────────────────────
-        // When weaponType is not null the enemy has a ranged weapon.
-        // The actual firing logic will be added in a later step; for now
-        // we just leave a clearly-labelled hook so it's obvious where it goes.
-        //
-        // if (enemy.weaponType !== null) {
-        //     enemyShoot(enemy, time);
-        // }
-        // ─────────────────────────────────────────────────────────────────
-
-    } else {
-        // PATROL: walk back and forth between the two waypoints
-        const distToTarget = Phaser.Math.Distance.Between(
-            sprite.x, sprite.y, enemy.target.x, enemy.target.y
+    // ── Ranged attack ────────────────────────────────────────────────────
+    // Armed enemies shoot when the player is within detectRange AND there
+    // is a clear line of sight (no wall in between).
+    if (enemy.weaponType !== null) {
+        const distToPlayer = Phaser.Math.Distance.Between(
+            sprite.x, sprite.y, player.x, player.y
         );
-        if (distToTarget < 4) {
-            enemy.target = (enemy.target === enemy.waypointA)
-            ? enemy.waypointB : enemy.waypointA;
+        if (los && distToPlayer < enemy.detectRange) {
+            enemyShoot(enemy, time);
         }
-        const angle = Phaser.Math.Angle.Between(
-            sprite.x, sprite.y, enemy.target.x, enemy.target.y
-        );
-        sprite.setVelocityX(Math.cos(angle) * enemy.speed);
-        sprite.setVelocityY(Math.sin(angle) * enemy.speed);
     }
 }
