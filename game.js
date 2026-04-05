@@ -20,6 +20,9 @@ const config = {
 
 const game = new Phaser.Game(config);
 
+let debugGraphics;
+let f1Key;
+
 let player;
 let cursors;
 let wasdKeys;
@@ -55,8 +58,8 @@ const PLAYER_SPEED    = 200;
 const BULLET_SPEED    = 400;
 const BULLET_COOLDOWN = 200;
 
-const NODE_CONNECT_DIST     = 200;   // px — max distance to auto-link two nodes
-const WANDER_BACKTRACK_CHANCE = 0.15; // odds of returning to previous node
+const NODE_CONNECT_DIST     = 250;   // px — max distance to auto-link two nodes
+const WANDER_BACKTRACK_CHANCE = 0.05; // odds of returning to previous node
 
 let lastShotTime = 0;
 
@@ -173,6 +176,9 @@ function create() {
     playerEnergy = PLAYER_MAX_ENERGY;
     killCount = 0;
     enemies = [];
+    playerInvincible = false;
+    lastShotTime     = 0;
+    rightStickReset  = true;
 
     // --- Tilemap ---
     const map      = this.make.tilemap({ key: 'level1' });
@@ -188,7 +194,7 @@ function create() {
     playerGfx.generateTexture('player', 32, 32);
     playerGfx.destroy();
 
-    player = this.physics.add.sprite(48, 48, 'player');
+    player = this.physics.add.sprite(82, 82, 'player');
     player.setCollideWorldBounds(true);
     this.physics.add.collider(player, wallLayer);
 
@@ -297,6 +303,12 @@ function create() {
 
     // --- HUD ---
     createHUD(this);
+
+    // --- Debug nav overlay ---
+    f1Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F1);
+    debugGraphics = this.add.graphics();
+    debugGraphics.setDepth(50);   // draw on top of everything
+    drawDebugNavStatic();   // nodes + connections — drawn once
 }
 
 // ─────────────────────────────────────────────
@@ -305,7 +317,13 @@ function create() {
 function update(time) {
     if (gameOver) { return; }
 
-    player.setVelocity(0);
+    // --- Debug overlay toggle (F1) ---
+    if (Phaser.Input.Keyboard.JustDown(
+        scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F1))) {
+        debugGraphics.setVisible(!debugGraphics.visible);
+        }
+
+        player.setVelocity(0);
 
     // --- Player movement ---
     const pad       = this.input.gamepad.getPad(0);
@@ -352,6 +370,15 @@ function update(time) {
     for (const enemy of enemies) {
         updateEnemy(enemy, time);
     }
+
+    if (Phaser.Input.Keyboard.JustDown(f1Key)) {
+        const visible = !debugGraphics.visible;
+        debugGraphics.setVisible(visible);
+        scene.debugStaticGfx.setVisible(visible);
+    }
+
+    // --- Debug nav overlay (redrawn each frame so enemy lines stay live) ---
+    drawDebugNavDynamic();  // enemy→target lines only
 }
 
 // ─────────────────────────────────────────────
@@ -459,32 +486,18 @@ function triggerGameOver() {
     player.setVelocity(0);
     player.setAlpha(0.3);
 
-    for (const enemy of enemies) {
-        enemy.sprite.setVelocity(0);
-    }
+    for (const enemy of enemies) { enemy.sprite.setVelocity(0); }
 
-    const camX = scene.cameras.main.scrollX;
-    const camY = scene.cameras.main.scrollY;
-    const cx    = camX + 400;
-    const cy    = camY + 300;
+    gameOverText = scene.add.text(400, 260, 'GAME OVER', {
+        fontFamily: 'monospace', fontSize: '48px',
+        fill: '#ff2244', stroke: '#000000', strokeThickness: 4
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(20);
 
-    gameOverText = scene.add.text(cx, cy - 40, 'GAME OVER', {
-        fontFamily: 'monospace',
-        fontSize:   '48px',
-        fill:       '#ff2244',
-        stroke:     '#000000',
-        strokeThickness: 4
-    }).setOrigin(0.5).setDepth(20);
+    restartText = scene.add.text(400, 320, 'Press R to restart', {
+        fontFamily: 'monospace', fontSize: '20px', fill: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(20);
 
-    restartText = scene.add.text(cx, cy + 20, 'Press R to restart', {
-        fontFamily: 'monospace',
-        fontSize:   '20px',
-        fill:       '#ffffff'
-    }).setOrigin(0.5).setDepth(20);
-
-    scene.input.keyboard.once('keydown-R', () => {
-        scene.scene.restart();
-    });
+    scene.input.keyboard.once('keydown-R', () => { scene.scene.restart(); });
 }
 
 // ─────────────────────────────────────────────
@@ -598,16 +611,34 @@ function tileToPixel(tileCoord) {
     };
 }
 
-function hasLineOfSight(x1, y1, x2, y2) {
-    const dist  = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-    const steps = Math.ceil(dist / 16);
+function hasLineOfSight(x1, y1, x2, y2, width) {
+    // Default to droid radius so the corridor matches the sprite
+    const halfWidth = (width !== undefined ? width : 12);
 
-    for (let i = 1; i < steps; i++) {
-        const t       = i / steps;
-        const sampleX = x1 + (x2 - x1) * t;
-        const sampleY = y1 + (y2 - y1) * t;
-        const tile    = wallLayer.getTileAtWorldXY(sampleX, sampleY);
-        if (tile && tile.index === 1) { return false; }
+    const dx  = x2 - x1;
+    const dy  = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len === 0) { return true; }
+
+    // Unit vector perpendicular to the ray direction
+    const perpX = -dy / len;
+    const perpY =  dx / len;
+
+    // Three offsets: left edge, centre, right edge
+    const offsets = [0, -halfWidth, halfWidth];
+
+    for (const offset of offsets) {
+        const ox = perpX * offset;
+        const oy = perpY * offset;
+
+        const steps = Math.ceil(len / 8);   // finer step for edge rays
+        for (let i = 1; i < steps; i++) {
+            const t       = i / steps;
+            const sampleX = x1 + ox + dx * t;
+            const sampleY = y1 + oy + dy * t;
+            const tile    = wallLayer.getTileAtWorldXY(sampleX, sampleY);
+            if (tile && tile.collides) { return false; }
+        }
     }
     return true;
 }
@@ -616,9 +647,9 @@ function hasLineOfSight(x1, y1, x2, y2) {
 //  ENEMY AI  (node-based patrol + pursuit)
 // ─────────────────────────────────────────────
 function updateEnemy(enemy, time) {
-    const sprite = enemy.sprite;
-
-    const los = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
+    const sprite       = enemy.sprite;
+    const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
+    const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
     sprite.setVisible(los);
 
     if (enemy.nodeTarget === null) {
@@ -651,15 +682,12 @@ function updateEnemy(enemy, time) {
         sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
     );
 
-    if (distToNode < 16) {   // was 4 — widened to survive physics collider nudging
+    if (distToNode < 4) {
         enemy.previousNodeId = enemy.currentNodeId;
 
         let nextId = null;
 
         if (enemy.weaponType !== null) {
-            const distToPlayer = Phaser.Math.Distance.Between(
-                sprite.x, sprite.y, player.x, player.y
-            );
             if (los && distToPlayer < enemy.detectRange) {
                 const playerNode = findNearestNode(player.x, player.y);
                 if (playerNode) {
@@ -690,9 +718,6 @@ function updateEnemy(enemy, time) {
 
     // ── Ranged attack ────────────────────────────────────────────────────
     if (enemy.weaponType !== null) {
-        const distToPlayer = Phaser.Math.Distance.Between(
-            sprite.x, sprite.y, player.x, player.y
-        );
         if (los && distToPlayer < enemy.detectRange) {
             enemyShoot(enemy, time);
         }
@@ -801,6 +826,7 @@ function bfsPath(startId, goalId) {
 // Semi-random next node for wandering.
 // Avoids the previous node most of the time, but not always.
 function pickWanderNode(enemy) {
+    if (enemy.currentNodeId === null) { return null; }
     const node = navNodes[enemy.currentNodeId];
     if (!node || node.neighbours.length === 0) { return null; }
 
@@ -815,4 +841,98 @@ function pickWanderNode(enemy) {
     }
 
     return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// ─────────────────────────────────────────────
+//  DEBUG — nav graph + enemy target lines
+// ─────────────────────────────────────────────
+function drawDebugNav() {
+    debugGraphics.clear();
+
+    // ── Node connections (thin grey lines) ──────────────────────────────
+    debugGraphics.lineStyle(1, 0x446688, 0.5);
+    for (const node of navNodes) {
+        for (const neighbourId of node.neighbours) {
+            // Only draw each edge once (when our id is the smaller one)
+            if (neighbourId > node.id) {
+                debugGraphics.beginPath();
+                debugGraphics.moveTo(node.x, node.y);
+                debugGraphics.lineTo(navNodes[neighbourId].x, navNodes[neighbourId].y);
+                debugGraphics.strokePath();
+            }
+        }
+    }
+
+    // ── Nav nodes (small filled circles) ────────────────────────────────
+    for (const node of navNodes) {
+        debugGraphics.fillStyle(0x00ccff, 0.85);
+        debugGraphics.fillCircle(node.x, node.y, 5);
+
+        // Node ID label — useful for spotting gaps in the graph
+        scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+            fontFamily: 'monospace',
+            fontSize:   '9px',
+            fill:       '#00ccff'
+        }).setDepth(51).setScrollFactor(1);
+        // Note: labels are created once here; call drawDebugNav() only once
+        // (from create) if you find them flickering — see update() call below.
+    }
+
+    // ── Enemy → target-node lines (bright yellow) ────────────────────────
+    for (const enemy of enemies) {
+        if (!enemy.nodeTarget) { continue; }
+        debugGraphics.lineStyle(2, 0xffee00, 0.9);
+        debugGraphics.beginPath();
+        debugGraphics.moveTo(enemy.sprite.x, enemy.sprite.y);
+        debugGraphics.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
+        debugGraphics.strokePath();
+
+        // Small dot at the target node so it's obvious which one is chosen
+        debugGraphics.fillStyle(0xffee00, 1);
+        debugGraphics.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
+    }
+}
+
+function drawDebugNavStatic() {
+    // Use a separate graphics object so it's never cleared
+    const staticGfx = scene.add.graphics();
+    staticGfx.setDepth(50);
+
+    staticGfx.lineStyle(1, 0x446688, 0.5);
+    for (const node of navNodes) {
+        for (const neighbourId of node.neighbours) {
+            if (neighbourId > node.id) {
+                staticGfx.beginPath();
+                staticGfx.moveTo(node.x, node.y);
+                staticGfx.lineTo(navNodes[neighbourId].x, navNodes[neighbourId].y);
+                staticGfx.strokePath();
+            }
+        }
+        staticGfx.fillStyle(0x00ccff, 0.85);
+        staticGfx.fillCircle(node.x, node.y, 5);
+
+        scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+            fontFamily: 'monospace',
+            fontSize:   '9px',
+            fill:       '#00ccff'
+        }).setDepth(51);
+    }
+    staticGfx.setVisible(false); // hidden until F1 toggles it
+    debugGraphics.setVisible(false); // dynamic lines also start hidden
+    // store reference so F1 can toggle both
+    scene.debugStaticGfx = staticGfx;
+}
+
+function drawDebugNavDynamic() {
+    debugGraphics.clear();
+    for (const enemy of enemies) {
+        if (!enemy.nodeTarget) { continue; }
+        debugGraphics.lineStyle(2, 0xffee00, 0.9);
+        debugGraphics.beginPath();
+        debugGraphics.moveTo(enemy.sprite.x, enemy.sprite.y);
+        debugGraphics.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
+        debugGraphics.strokePath();
+        debugGraphics.fillStyle(0xffee00, 1);
+        debugGraphics.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
+    }
 }
