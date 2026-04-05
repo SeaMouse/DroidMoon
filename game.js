@@ -316,15 +316,7 @@ function create() {
 // ─────────────────────────────────────────────
 function update(time) {
     if (gameOver) { return; }
-
-    // --- Debug overlay toggle (F1) ---
-    if (Phaser.Input.Keyboard.JustDown(
-        scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F1))) {
-        debugGraphics.setVisible(!debugGraphics.visible);
-        }
-
-        player.setVelocity(0);
-
+    player.setVelocity(0);
     // --- Player movement ---
     const pad       = this.input.gamepad.getPad(0);
     const DEAD_ZONE = 0.15;
@@ -666,11 +658,18 @@ function updateEnemy(enemy, time) {
             enemy.lastStuckCheckPos.x, enemy.lastStuckCheckPos.y
         );
         if (movedDist < 8) {
-            const nextId = pickWanderNode(enemy);
-            if (nextId !== null) {
+            // Snap to nearest node from actual physical position first,
+            // then pick a valid neighbour from there — otherwise the path
+            // may come from a node the droid never actually reached.
+            const nearestNode = findNearestNode(sprite.x, sprite.y);
+            if (nearestNode) {
                 enemy.previousNodeId = enemy.currentNodeId;
-                enemy.currentNodeId  = nextId;
-                enemy.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+                enemy.currentNodeId  = nearestNode.id;
+                const nextId = pickWanderNode(enemy);
+                if (nextId !== null) {
+                    enemy.currentNodeId = nextId;
+                    enemy.nodeTarget    = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+                }
             }
         }
         enemy.lastStuckCheckTime    = time;
@@ -898,7 +897,7 @@ function drawDebugNavStatic() {
     const staticGfx = scene.add.graphics();
     staticGfx.setDepth(50);
 
-    staticGfx.lineStyle(1, 0x446688, 0.5);
+    staticGfx.lineStyle(2, 0x00ff88, 0.85);
     for (const node of navNodes) {
         for (const neighbourId of node.neighbours) {
             if (neighbourId > node.id) {
