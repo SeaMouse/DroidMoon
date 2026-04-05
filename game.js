@@ -25,6 +25,7 @@ let cursors;
 let wasdKeys;
 let wallLayer;
 let enemies = [];
+let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
 let bullets;          // player bullets
 let enemyBullets;     // enemy bullets — separate group so overlaps are unambiguous
 let enemyGroup;
@@ -53,6 +54,9 @@ const TILE_SIZE       = 32;
 const PLAYER_SPEED    = 200;
 const BULLET_SPEED    = 400;
 const BULLET_COOLDOWN = 200;
+
+const NODE_CONNECT_DIST     = 200;   // px — max distance to auto-link two nodes
+const WANDER_BACKTRACK_CHANCE = 0.15; // odds of returning to previous node
 
 let lastShotTime = 0;
 
@@ -146,10 +150,10 @@ const enemyTypes = {
 //  LEVEL LAYOUT — enemy placements
 // ─────────────────────────────────────────────
 const enemyDefinitions = [
-    { type: 'cleaner',        startTile: {x: 4,  y: 2},  waypointA: {x: 4,  y: 2},  waypointB: {x: 20, y: 2}  },
-{ type: 'cleaner',        startTile: {x: 4,  y: 17}, waypointA: {x: 4,  y: 17}, waypointB: {x: 20, y: 17} },
-{ type: 'patrol_drone',   startTile: {x: 12, y: 8},  waypointA: {x: 12, y: 8},  waypointB: {x: 16, y: 8}  },
-{ type: 'security_light', startTile: {x: 1,  y: 10}, waypointA: {x: 1,  y: 10}, waypointB: {x: 9,  y: 10} },
+    { type: 'cleaner',        startTile: {x: 4,  y: 2}  },
+    { type: 'cleaner',        startTile: {x: 4,  y: 17} },
+    { type: 'patrol_drone',   startTile: {x: 12, y: 8}  },
+    { type: 'security_light', startTile: {x: 1,  y: 10} },
 ];
 
 // ─────────────────────────────────────────────
@@ -175,6 +179,7 @@ function create() {
     const tileset  = map.addTilesetImage('tiles', 'tiles');
     wallLayer      = map.createLayer('Tile Layer 1', tileset, 0, 0);
     wallLayer.setCollision(1);
+    buildNavGraph(map);
 
     // --- Player texture ---
     const playerGfx = this.add.graphics();
@@ -247,19 +252,25 @@ function create() {
         this.physics.add.collider(sprite, wallLayer);
         enemyGroup.add(sprite);
 
+        const startNode = findNearestNode(startX, startY);
+        const initNodeId = startNode ? startNode.id : null;
+        const initTarget = startNode ? { x: startNode.x, y: startNode.y } : null;
+
         enemies.push({
             sprite:        sprite,
             typeName:      def.type,
             label:         typeDef.label,
-            waypointA:     tileToPixel(def.waypointA),
-                     waypointB:     tileToPixel(def.waypointB),
-                     target:        tileToPixel(def.waypointB),
-                     hp:            typeDef.hp,
-                     contactDamage: typeDef.contactDamage,
-                     speed:         typeDef.speed,
-                     detectRange:   typeDef.detectRange,
-                     weaponType:    typeDef.weaponType,
-                     lastShotTime:  0,   // each enemy tracks its own shot cooldown
+            currentNodeId: initNodeId,
+            previousNodeId: null,
+            nodeTarget:    initTarget,
+            hp:            typeDef.hp,
+            contactDamage: typeDef.contactDamage,
+            speed:         typeDef.speed,
+            detectRange:   typeDef.detectRange,
+            weaponType:    typeDef.weaponType,
+            lastShotTime:  0,
+            lastStuckCheckTime: 0,
+            lastStuckCheckPos:  { x: startX, y: startY },
         });
 
         this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
@@ -602,34 +613,82 @@ function hasLineOfSight(x1, y1, x2, y2) {
 }
 
 // ─────────────────────────────────────────────
-//  ENEMY AI  (patrol + ranged attack)
+//  ENEMY AI  (node-based patrol + pursuit)
 // ─────────────────────────────────────────────
 function updateEnemy(enemy, time) {
     const sprite = enemy.sprite;
 
-    // ── Visibility ──────────────────────────────────────────────────────
-    // Only draw enemies the player has line of sight to.
     const los = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
     sprite.setVisible(los);
 
-    // ── Patrol ──────────────────────────────────────────────────────────
-    // Enemies always walk their waypoint route — they never chase.
-    const distToTarget = Phaser.Math.Distance.Between(
-        sprite.x, sprite.y, enemy.target.x, enemy.target.y
-    );
-    if (distToTarget < 4) {
-        enemy.target = (enemy.target === enemy.waypointA)
-        ? enemy.waypointB : enemy.waypointA;
+    if (enemy.nodeTarget === null) {
+        sprite.setVelocity(0);
+        return;
     }
-    const patrolAngle = Phaser.Math.Angle.Between(
-        sprite.x, sprite.y, enemy.target.x, enemy.target.y
+
+    // ── Stuck detection ──────────────────────────────────────────────────
+    // Once per second, check if the enemy has barely moved. If so, force a
+    // new node — handles cases where physics blocks the path to a node.
+    if (time > enemy.lastStuckCheckTime + 1000) {
+        const movedDist = Phaser.Math.Distance.Between(
+            sprite.x, sprite.y,
+            enemy.lastStuckCheckPos.x, enemy.lastStuckCheckPos.y
+        );
+        if (movedDist < 8) {
+            const nextId = pickWanderNode(enemy);
+            if (nextId !== null) {
+                enemy.previousNodeId = enemy.currentNodeId;
+                enemy.currentNodeId  = nextId;
+                enemy.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+            }
+        }
+        enemy.lastStuckCheckTime    = time;
+        enemy.lastStuckCheckPos     = { x: sprite.x, y: sprite.y };
+    }
+
+    // ── Arrived at target node? (wider radius than before) ───────────────
+    const distToNode = Phaser.Math.Distance.Between(
+        sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
     );
-    sprite.setVelocityX(Math.cos(patrolAngle) * enemy.speed);
-    sprite.setVelocityY(Math.sin(patrolAngle) * enemy.speed);
+
+    if (distToNode < 16) {   // was 4 — widened to survive physics collider nudging
+        enemy.previousNodeId = enemy.currentNodeId;
+
+        let nextId = null;
+
+        if (enemy.weaponType !== null) {
+            const distToPlayer = Phaser.Math.Distance.Between(
+                sprite.x, sprite.y, player.x, player.y
+            );
+            if (los && distToPlayer < enemy.detectRange) {
+                const playerNode = findNearestNode(player.x, player.y);
+                if (playerNode) {
+                    const path = bfsPath(enemy.currentNodeId, playerNode.id);
+                    if (path && path.length > 0) {
+                        nextId = path[0];
+                    }
+                }
+            }
+        }
+
+        if (nextId === null) {
+            nextId = pickWanderNode(enemy);
+        }
+
+        if (nextId !== null) {
+            enemy.currentNodeId = nextId;
+            enemy.nodeTarget    = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+        }
+    }
+
+    // ── Move toward current target node ─────────────────────────────────
+    const moveAngle = Phaser.Math.Angle.Between(
+        sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
+    );
+    sprite.setVelocityX(Math.cos(moveAngle) * enemy.speed);
+    sprite.setVelocityY(Math.sin(moveAngle) * enemy.speed);
 
     // ── Ranged attack ────────────────────────────────────────────────────
-    // Armed enemies shoot when the player is within detectRange AND there
-    // is a clear line of sight (no wall in between).
     if (enemy.weaponType !== null) {
         const distToPlayer = Phaser.Math.Distance.Between(
             sprite.x, sprite.y, player.x, player.y
@@ -638,4 +697,122 @@ function updateEnemy(enemy, time) {
             enemyShoot(enemy, time);
         }
     }
+}
+
+// ─────────────────────────────────────────────
+//  NAV GRAPH — build from Tiled object layer
+// ─────────────────────────────────────────────
+function buildNavGraph(map) {
+    navNodes = [];
+
+    // Diagnostic — log every layer Phaser can see
+    console.log('NAV: All layers found by Phaser:');
+    map.layers.forEach(l => console.log('  tile layer:', l.name));
+    if (map.objects) {
+        map.objects.forEach(l => console.log('  object layer:', l.name));
+    }
+
+    // Try the standard API first, fall back to raw map.objects array
+    let objLayer = map.getObjectLayer('Waypoints');
+
+    if (!objLayer) {
+        // Phaser sometimes stores object layers in map.objects rather than
+        // making them available via getObjectLayer, depending on version
+        const raw = map.objects
+        ? map.objects.find(l => l.name === 'Waypoints')
+        : null;
+        if (raw) {
+            console.log('NAV: Found Waypoints via map.objects fallback.');
+            objLayer = raw;
+        }
+    }
+
+    if (!objLayer) {
+        console.warn('NAV: "Waypoints" layer not found by either method. Check layer name exactly.');
+        return;
+    }
+
+    objLayer.objects.forEach((obj, index) => {
+        navNodes.push({ id: index, x: obj.x, y: obj.y, neighbours: [] });
+    });
+
+    console.log(`NAV: Found ${navNodes.length} waypoint objects.`);
+
+    for (let i = 0; i < navNodes.length; i++) {
+        for (let j = i + 1; j < navNodes.length; j++) {
+            const a    = navNodes[i];
+            const b    = navNodes[j];
+            const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
+            if (dist <= NODE_CONNECT_DIST && hasLineOfSight(a.x, a.y, b.x, b.y)) {
+                a.neighbours.push(b.id);
+                b.neighbours.push(a.id);
+            }
+        }
+    }
+
+    const totalLinks = navNodes.reduce((sum, n) => sum + n.neighbours.length, 0) / 2;
+    console.log(`NAV: Graph built — ${navNodes.length} nodes, ${totalLinks} connections.`);
+
+    if (totalLinks === 0 && navNodes.length > 1) {
+        console.warn(`NAV: No connections formed! Nodes may be more than ${NODE_CONNECT_DIST}px apart, or walls are blocking LOS.`);
+    }
+}
+
+// ─────────────────────────────────────────────
+//  NAV GRAPH — helpers
+// ─────────────────────────────────────────────
+function findNearestNode(x, y) {
+    let best     = null;
+    let bestDist = Infinity;
+    for (const node of navNodes) {
+        const d = Phaser.Math.Distance.Between(x, y, node.x, node.y);
+        if (d < bestDist) { bestDist = d; best = node; }
+    }
+    return best;
+}
+
+// BFS from startId to goalId.
+// Returns an ordered array of node IDs to traverse (not including startId),
+// or null if no path exists.
+function bfsPath(startId, goalId) {
+    if (startId === goalId) { return []; }
+
+    const visited = new Set([startId]);
+    const queue   = [[startId]];   // each entry is the path taken so far
+
+    while (queue.length > 0) {
+        const path    = queue.shift();
+        const current = path[path.length - 1];
+
+        for (const neighbourId of navNodes[current].neighbours) {
+            if (neighbourId === goalId) {
+                // Drop the start node; caller only needs what's ahead
+                return [...path.slice(1), neighbourId];
+            }
+            if (!visited.has(neighbourId)) {
+                visited.add(neighbourId);
+                queue.push([...path, neighbourId]);
+            }
+        }
+    }
+    return null;   // no route found (disconnected graph)
+}
+
+// Semi-random next node for wandering.
+// Avoids the previous node most of the time, but not always.
+function pickWanderNode(enemy) {
+    const node = navNodes[enemy.currentNodeId];
+    if (!node || node.neighbours.length === 0) { return null; }
+
+    let candidates = node.neighbours;
+
+    // Prefer not to backtrack — but allow it occasionally
+    if (enemy.previousNodeId !== null && candidates.length > 1) {
+        const noBacktrack = candidates.filter(id => id !== enemy.previousNodeId);
+        if (Math.random() > WANDER_BACKTRACK_CHANCE) {
+            candidates = noBacktrack;
+        }
+    }
+
+    return candidates[Math.floor(Math.random() * candidates.length)];
 }
