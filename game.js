@@ -111,7 +111,7 @@ const enemyTypes = {
         hp:            1,
         contactDamage: 5,
         weaponType:    null,
-        weight:        10,
+        weight:        2,
     },
     patrol_drone: {
         label:         'Patrol Drone',
@@ -121,7 +121,7 @@ const enemyTypes = {
         hp:            2,
         contactDamage: 10,
         weaponType:    null,
-        weight:        2,
+        weight:        3,
     },
     security_light: {
         label:         'Security Droid (Light)',
@@ -271,11 +271,10 @@ function create() {
             lastShotTime:  0,
             lastStuckCheckTime: 0,
             lastStuckCheckPos:  { x: startX, y: startY },
-            bounceCooldown: 0
+            bounceCooldown: 0,
+            knockbackUntil: 0
         });
-
-        //this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
-        this.physics.add.overlap(bullets, enemyGroup, bulletHitEnemy); // << Enemies stop but do not die when I use this instead << Bug 4
+        this.physics.add.overlap(bullets, enemyGroup, bulletHitEnemy);
     }
 
     // --- Player-enemy contact damage ---
@@ -399,8 +398,6 @@ function updateHUD() {
 // ─────────────────────────────────────────────
 //  PLAYER ↔ ENEMY COLLISION  (replaces overlap-based playerTouchedByEnemy)
 // ─────────────────────────────────────────────
-// The physics collider already separates the bodies; this callback handles
-// damage, player knock-back, and the enemy's reversal pause.
 function onPlayerEnemyCollide(playerSprite, enemySprite) {
     const enemy = enemies.find(e => e.sprite === enemySprite);
     if (!enemy) { return; }
@@ -431,13 +428,19 @@ function onPlayerEnemyCollide(playerSprite, enemySprite) {
                 nx * pushFactor * MAX_PUSH,
                 ny * pushFactor * MAX_PUSH
             );
+
+            // ── Knockback window ─────────────────────────────────────────
+            // Give the enemy enough time to physically separate from the
+            // player before the AI resumes overwriting its velocity.
+            // We also re-snap the nav target to the nearest node so the
+            // enemy doesn't resume walking toward a node it may have
+            // already passed during the collision.
+            enemy.knockbackUntil = scene.time.now + 150;
+            reverseEnemyCourse(enemy);
         }
     }
 }
 
-// ─────────────────────────────────────────────
-//  ENEMY ↔ ENEMY COLLISION
-// ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
 //  ENEMY ↔ ENEMY COLLISION
 // ─────────────────────────────────────────────
@@ -448,9 +451,6 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
 
     const now = scene.time.now;
 
-    // If either enemy is still in its bounce window, do nothing.
-    // This prevents the callback firing every frame from turning
-    // a single ricochet into a sustained push.
     if (now < enemyA.bounceCooldown || now < enemyB.bounceCooldown) { return; }
 
     const wA    = enemyTypes[enemyA.typeName].weight;
@@ -463,14 +463,22 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
     const nx   = dx / dist;
     const ny   = dy / dist;
 
-    const BOUNCE = 180;
+    const BOUNCE = 100;
     spriteA.setVelocity(-nx * BOUNCE * (wB / total), -ny * BOUNCE * (wB / total));
     spriteB.setVelocity( nx * BOUNCE * (wA / total),  ny * BOUNCE * (wA / total));
 
-    // Lock out further bounces for both until they've had time to separate
-    const COOLDOWN_MS = 400;
+    const COOLDOWN_MS = 220;
     enemyA.bounceCooldown = now + COOLDOWN_MS;
     enemyB.bounceCooldown = now + COOLDOWN_MS;
+
+    // ── Knockback window + nav re-snap ───────────────────────────────────
+    // Both enemies need their AI paused, and their nav targets refreshed
+    // to the nearest node from their post-collision position.
+    enemyA.knockbackUntil = now + COOLDOWN_MS;
+    enemyB.knockbackUntil = now + COOLDOWN_MS;
+
+    reverseEnemyCourse(enemyA);
+    reverseEnemyCourse(enemyB);
 }
 
 // ─────────────────────────────────────────────
@@ -695,21 +703,32 @@ function updateEnemy(enemy, time) {
         return;
     }
 
+    // ── Knockback in progress — let physics run freely ───────────────────
+    // The collision handlers have already set velocity and re-snapped the
+    // nav target. We just wait here and don't touch velocity until the
+    // window expires.
+    if (time < enemy.knockbackUntil) {
+        // Still allow shooting if the enemy can see the player — being
+        // knocked around doesn't stop a security droid from opening fire.
+        if (enemy.weaponType !== null && los && distToPlayer < enemy.detectRange) {
+            enemyShoot(enemy, time);
+        }
+        return;
+    }
+
     // ── Stuck detection ──────────────────────────────────────────────────
-    if (time > enemy.lastStuckCheckTime + 1000) {
+    if (time > enemy.knockbackUntil && time > enemy.lastStuckCheckTime + 1000) {
         const movedDist = Phaser.Math.Distance.Between(
             sprite.x, sprite.y,
             enemy.lastStuckCheckPos.x, enemy.lastStuckCheckPos.y
         );
         if (movedDist < 8) {
-            // Just go back to where we came from
             if (enemy.previousNodeId !== null) {
                 const prevNode = navNodes[enemy.previousNodeId];
                 enemy.currentNodeId  = enemy.previousNodeId;
                 enemy.previousNodeId = null;
                 enemy.nodeTarget     = { x: prevNode.x, y: prevNode.y };
             } else {
-                // No previous node recorded — snap to nearest as a last resort
                 const nearestNode = findNearestNode(sprite.x, sprite.y);
                 if (nearestNode) {
                     enemy.currentNodeId = nearestNode.id;
@@ -884,6 +903,25 @@ function pickWanderNode(enemy) {
     }
 
     return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function reverseEnemyCourse(enemy) {
+    if (enemy.previousNodeId !== null) {
+        const prevNode = navNodes[enemy.previousNodeId];
+        // Swap: where I was going becomes "previous",
+        // where I came from becomes my new target
+        const oldCurrent = enemy.currentNodeId;
+        enemy.currentNodeId  = enemy.previousNodeId;
+        enemy.previousNodeId = oldCurrent;
+        enemy.nodeTarget     = { x: prevNode.x, y: prevNode.y };
+    } else {
+        // No history — snap to nearest as a fallback
+        const nearest = findNearestNode(enemy.sprite.x, enemy.sprite.y);
+        if (nearest) {
+            enemy.currentNodeId = nearest.id;
+            enemy.nodeTarget    = { x: nearest.x, y: nearest.y };
+        }
+    }
 }
 
 // ─────────────────────────────────────────────
