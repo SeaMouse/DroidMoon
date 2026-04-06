@@ -60,7 +60,7 @@ const BULLET_SPEED    = 400;
 const BULLET_COOLDOWN = 200;
 
 const NODE_CONNECT_DIST     = 250;   // px — max distance to auto-link two nodes
-const WANDER_BACKTRACK_CHANCE = 0.01; // odds of returning to previous node
+const WANDER_BACKTRACK_CHANCE = 0.05; // odds of returning to previous node
 
 let lastShotTime = 0;
 
@@ -292,15 +292,6 @@ function create() {
     this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
     this.cameras.main.startFollow(player, true, 0.08, 0.08);
 
-    // --- Input ---
-    cursors  = this.input.keyboard.createCursorKeys();
-    wasdKeys = this.input.keyboard.addKeys({
-        up:    Phaser.Input.Keyboard.KeyCodes.W,
-        down:  Phaser.Input.Keyboard.KeyCodes.S,
-        left:  Phaser.Input.Keyboard.KeyCodes.A,
-        right: Phaser.Input.Keyboard.KeyCodes.D
-    });
-
     // --- HUD ---
     createHUD(this);
 
@@ -320,12 +311,6 @@ function update(time) {
     // --- Player movement ---
     const pad       = this.input.gamepad.getPad(0);
     const DEAD_ZONE = 0.15;
-
-    if (wasdKeys.left.isDown)  { player.setVelocityX(-PLAYER_SPEED); }
-    if (wasdKeys.right.isDown) { player.setVelocityX(PLAYER_SPEED);  }
-    if (wasdKeys.up.isDown)    { player.setVelocityY(-PLAYER_SPEED); }
-    if (wasdKeys.down.isDown)  { player.setVelocityY(PLAYER_SPEED);  }
-
     if (pad) {
         if (Math.abs(pad.leftStick.x) > DEAD_ZONE) { player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
         if (Math.abs(pad.leftStick.y) > DEAD_ZONE) { player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
@@ -334,12 +319,6 @@ function update(time) {
     // --- Player aiming and shooting ---
     let aimX = 0;
     let aimY = 0;
-
-    if (cursors.left.isDown)  { aimX = -1; }
-    if (cursors.right.isDown) { aimX =  1; }
-    if (cursors.up.isDown)    { aimY = -1; }
-    if (cursors.down.isDown)  { aimY =  1; }
-
     if (pad) {
         const RSX      = pad.rightStick.x;
         const RSY      = pad.rightStick.y;
@@ -367,6 +346,7 @@ function update(time) {
         const visible = !debugGraphics.visible;
         debugGraphics.setVisible(visible);
         scene.debugStaticGfx.setVisible(visible);
+        scene.debugNodeLabels.forEach(label => label.setVisible(visible));
     }
 
     // --- Debug nav overlay (redrawn each frame so enemy lines stay live) ---
@@ -938,13 +918,14 @@ function drawDebugNav() {
         debugGraphics.fillCircle(node.x, node.y, 5);
 
         // Node ID label — useful for spotting gaps in the graph
-        scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+        scene.debugNodeLabels = [];   // ← added at the top of the function
+
+        const label = scene.add.text(node.x + 6, node.y - 6, String(node.id), {
             fontFamily: 'monospace',
             fontSize:   '9px',
             fill:       '#00ccff'
-        }).setDepth(51).setScrollFactor(1);
-        // Note: labels are created once here; call drawDebugNav() only once
-        // (from create) if you find them flickering — see update() call below.
+        }).setDepth(51).setVisible(false);   // ← starts hidden
+        scene.debugNodeLabels.push(label);  // ← stored so F1 can reach it
     }
 
     // ── Enemy → target-node lines (bright yellow) ────────────────────────
@@ -967,6 +948,8 @@ function drawDebugNavStatic() {
     const staticGfx = scene.add.graphics();
     staticGfx.setDepth(50);
 
+    scene.debugNodeLabels = [];
+
     staticGfx.lineStyle(2, 0x00ff88, 0.85);
     for (const node of navNodes) {
         for (const neighbourId of node.neighbours) {
@@ -980,11 +963,12 @@ function drawDebugNavStatic() {
         staticGfx.fillStyle(0x00ccff, 0.85);
         staticGfx.fillCircle(node.x, node.y, 5);
 
-        scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+        const label = scene.add.text(node.x + 6, node.y - 6, String(node.id), {
             fontFamily: 'monospace',
             fontSize:   '9px',
             fill:       '#00ccff'
-        }).setDepth(51);
+        }).setDepth(51).setVisible(false);
+        scene.debugNodeLabels.push(label);
     }
     staticGfx.setVisible(false); // hidden until F1 toggles it
     debugGraphics.setVisible(false); // dynamic lines also start hidden
