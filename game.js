@@ -39,12 +39,12 @@ let scene;
 let energyBarFill;
 let killText;
 let killCount = 0;
+const ENERGY_BAR_WIDTH  = 150;
+const ENERGY_BAR_HEIGHT = 14;
 
 // --- Player energy ---
 let playerEnergy;
 const PLAYER_MAX_ENERGY = 100;
-const ENERGY_BAR_WIDTH  = 150;
-const ENERGY_BAR_HEIGHT = 14;
 let playerInvincible    = false;
 const INVINCIBILITY_MS  = 1200;
 
@@ -55,6 +55,7 @@ let restartText;
 
 const TILE_SIZE       = 32;
 const PLAYER_SPEED    = 200;
+const PLAYER_WEIGHT   = 2;
 const BULLET_SPEED    = 400;
 const BULLET_COOLDOWN = 200;
 
@@ -104,48 +105,45 @@ const weaponTypes = {
 //   weaponType   - null (unarmed) or a key from weaponTypes above
 //
 const enemyTypes = {
-
-    // ── Tier 0 ── Civilian / maintenance ──────────────────────────────────
     cleaner: {
         label:         'Cleaning Bot',
-        colour:        0x88ccff,   // pale blue
+        colour:        0x88ccff,
         speed:         55,
-        detectRange:   0,          // unarmed — field unused
+        detectRange:   0,
         hp:            1,
         contactDamage: 5,
         weaponType:    null,
+        weight:        10,
     },
-
-    // ── Tier 1 ── Basic security ───────────────────────────────────────────
     patrol_drone: {
         label:         'Patrol Drone',
-        colour:        0xff8800,   // orange
+        colour:        0xff8800,
         speed:         100,
-        detectRange:   0,          // unarmed — rams on contact only
+        detectRange:   0,
         hp:            2,
         contactDamage: 10,
         weaponType:    null,
+        weight:        2,
     },
-
     security_light: {
         label:         'Security Droid (Light)',
-        colour:        0xff3300,   // red-orange
+        colour:        0xff3300,
         speed:         120,
-        detectRange:   220,        // shooting range in pixels
+        detectRange:   220,
         hp:            2,
         contactDamage: 15,
         weaponType:    'blaster',
+        weight:        5,
     },
-
-    // ── Tier 2 ── Heavy security ───────────────────────────────────────────
     security_heavy: {
         label:         'Security Droid (Heavy)',
-        colour:        0xcc00ff,   // purple
+        colour:        0xcc00ff,
         speed:         75,
         detectRange:   260,
         hp:            4,
         contactDamage: 25,
         weaponType:    'heavy_blaster',
+        weight:        8,
     },
 };
 
@@ -283,7 +281,8 @@ function create() {
     }
 
     // --- Player-enemy contact damage ---
-    this.physics.add.overlap(player, enemyGroup, playerTouchedByEnemy);
+    this.physics.add.collider(player, enemyGroup, onPlayerEnemyCollide);
+    this.physics.add.collider(enemyGroup, enemyGroup, onEnemyEnemyCollide);
 
     // --- Camera ---
     const mapWidth  = map.widthInPixels;
@@ -420,12 +419,67 @@ function updateHUD() {
 }
 
 // ─────────────────────────────────────────────
-//  PLAYER DAMAGE — contact
+//  PLAYER ↔ ENEMY COLLISION  (replaces overlap-based playerTouchedByEnemy)
 // ─────────────────────────────────────────────
-function playerTouchedByEnemy(playerSprite, enemySprite) {
-    const enemy  = enemies.find(e => e.sprite === enemySprite);
-    const damage = enemy ? enemy.contactDamage : 10;
-    applyDamageToPlayer(damage);
+// The physics collider already separates the bodies; this callback handles
+// damage, player knock-back, and the enemy's reversal pause.
+function onPlayerEnemyCollide(playerSprite, enemySprite) {
+    const enemy = enemies.find(e => e.sprite === enemySprite);
+    if (!enemy) { return; }
+
+    const wasInvincible = playerInvincible;
+    applyDamageToPlayer(enemy.contactDamage);
+
+    if (!wasInvincible) {
+        const wEnemy = enemyTypes[enemy.typeName].weight;
+        const total  = PLAYER_WEIGHT + wEnemy;
+
+        const dx   = enemySprite.x - playerSprite.x;
+        const dy   = enemySprite.y - playerSprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx   = dx / dist;
+        const ny   = dy / dist;
+
+        const PLAYER_BOUNCE = 220;
+        playerSprite.setVelocity(
+            -nx * PLAYER_BOUNCE * (wEnemy / total),
+                                 -ny * PLAYER_BOUNCE * (wEnemy / total)
+        );
+
+        if (wEnemy < PLAYER_WEIGHT) {
+            const MAX_PUSH   = 200;
+            const pushFactor = (PLAYER_WEIGHT - wEnemy) / PLAYER_WEIGHT;
+            enemySprite.setVelocity(
+                nx * pushFactor * MAX_PUSH,
+                ny * pushFactor * MAX_PUSH
+            );
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+//  ENEMY ↔ ENEMY COLLISION
+// ─────────────────────────────────────────────
+// Both droids bounce off each other. The lighter one travels further.
+// Both pause briefly before resuming patrol on a new node.
+function onEnemyEnemyCollide(spriteA, spriteB) {
+    const enemyA = enemies.find(e => e.sprite === spriteA);
+    const enemyB = enemies.find(e => e.sprite === spriteB);
+    if (!enemyA || !enemyB) { return; }
+
+    const wA    = enemyTypes[enemyA.typeName].weight;
+    const wB    = enemyTypes[enemyB.typeName].weight;
+    const total = wA + wB;
+
+    const dx   = spriteB.x - spriteA.x;
+    const dy   = spriteB.y - spriteA.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx   = dx / dist;
+    const ny   = dy / dist;
+
+    const BOUNCE = 180;
+    spriteA.setVelocity(-nx * BOUNCE * (wB / total), -ny * BOUNCE * (wB / total));
+    spriteB.setVelocity( nx * BOUNCE * (wA / total),  ny * BOUNCE * (wA / total));
 }
 
 // ─────────────────────────────────────────────
@@ -639,7 +693,8 @@ function hasLineOfSight(x1, y1, x2, y2, width) {
 //  ENEMY AI  (node-based patrol + pursuit)
 // ─────────────────────────────────────────────
 function updateEnemy(enemy, time) {
-    const sprite       = enemy.sprite;
+    const sprite = enemy.sprite;
+
     const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
     const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
     sprite.setVisible(los);
@@ -649,41 +704,41 @@ function updateEnemy(enemy, time) {
         return;
     }
 
+    // ── Stuck detection ─────────────────────────────────────────────────
+    // ... rest of function unchanged
+
     // ── Stuck detection ──────────────────────────────────────────────────
-    // Once per second, check if the enemy has barely moved. If so, force a
-    // new node — handles cases where physics blocks the path to a node.
     if (time > enemy.lastStuckCheckTime + 1000) {
         const movedDist = Phaser.Math.Distance.Between(
             sprite.x, sprite.y,
             enemy.lastStuckCheckPos.x, enemy.lastStuckCheckPos.y
         );
         if (movedDist < 8) {
-            // Snap to nearest node from actual physical position first,
-            // then pick a valid neighbour from there — otherwise the path
-            // may come from a node the droid never actually reached.
-            const nearestNode = findNearestNode(sprite.x, sprite.y);
-            if (nearestNode) {
-                enemy.previousNodeId = enemy.currentNodeId;
-                enemy.currentNodeId  = nearestNode.id;
-                const nextId = pickWanderNode(enemy);
-                if (nextId !== null) {
-                    enemy.currentNodeId = nextId;
-                    enemy.nodeTarget    = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+            // Just go back to where we came from
+            if (enemy.previousNodeId !== null) {
+                const prevNode = navNodes[enemy.previousNodeId];
+                enemy.currentNodeId  = enemy.previousNodeId;
+                enemy.previousNodeId = null;
+                enemy.nodeTarget     = { x: prevNode.x, y: prevNode.y };
+            } else {
+                // No previous node recorded — snap to nearest as a last resort
+                const nearestNode = findNearestNode(sprite.x, sprite.y);
+                if (nearestNode) {
+                    enemy.currentNodeId = nearestNode.id;
+                    enemy.nodeTarget    = { x: nearestNode.x, y: nearestNode.y };
                 }
             }
         }
-        enemy.lastStuckCheckTime    = time;
-        enemy.lastStuckCheckPos     = { x: sprite.x, y: sprite.y };
+        enemy.lastStuckCheckTime = time;
+        enemy.lastStuckCheckPos  = { x: sprite.x, y: sprite.y };
     }
 
-    // ── Arrived at target node? (wider radius than before) ───────────────
+    // ── Arrived at target node? ──────────────────────────────────────────
     const distToNode = Phaser.Math.Distance.Between(
         sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
     );
 
     if (distToNode < 4) {
-        //enemy.previousNodeId = enemy.currentNodeId;
-
         let nextId = null;
 
         if (enemy.weaponType !== null) {
@@ -704,8 +759,8 @@ function updateEnemy(enemy, time) {
 
         if (nextId !== null) {
             enemy.previousNodeId = enemy.currentNodeId;
-            enemy.currentNodeId = nextId;
-            enemy.nodeTarget    = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+            enemy.currentNodeId  = nextId;
+            enemy.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
         }
     }
 
