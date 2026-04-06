@@ -275,6 +275,7 @@ function create() {
             lastShotTime:  0,
             lastStuckCheckTime: 0,
             lastStuckCheckPos:  { x: startX, y: startY },
+            bounceCooldown: 0
         });
 
         this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
@@ -460,12 +461,20 @@ function onPlayerEnemyCollide(playerSprite, enemySprite) {
 // ─────────────────────────────────────────────
 //  ENEMY ↔ ENEMY COLLISION
 // ─────────────────────────────────────────────
-// Both droids bounce off each other. The lighter one travels further.
-// Both pause briefly before resuming patrol on a new node.
+// ─────────────────────────────────────────────
+//  ENEMY ↔ ENEMY COLLISION
+// ─────────────────────────────────────────────
 function onEnemyEnemyCollide(spriteA, spriteB) {
     const enemyA = enemies.find(e => e.sprite === spriteA);
     const enemyB = enemies.find(e => e.sprite === spriteB);
     if (!enemyA || !enemyB) { return; }
+
+    const now = scene.time.now;
+
+    // If either enemy is still in its bounce window, do nothing.
+    // This prevents the callback firing every frame from turning
+    // a single ricochet into a sustained push.
+    if (now < enemyA.bounceCooldown || now < enemyB.bounceCooldown) { return; }
 
     const wA    = enemyTypes[enemyA.typeName].weight;
     const wB    = enemyTypes[enemyB.typeName].weight;
@@ -480,6 +489,11 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
     const BOUNCE = 180;
     spriteA.setVelocity(-nx * BOUNCE * (wB / total), -ny * BOUNCE * (wB / total));
     spriteB.setVelocity( nx * BOUNCE * (wA / total),  ny * BOUNCE * (wA / total));
+
+    // Lock out further bounces for both until they've had time to separate
+    const COOLDOWN_MS = 400;
+    enemyA.bounceCooldown = now + COOLDOWN_MS;
+    enemyB.bounceCooldown = now + COOLDOWN_MS;
 }
 
 // ─────────────────────────────────────────────
