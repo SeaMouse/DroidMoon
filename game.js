@@ -59,7 +59,7 @@ const BULLET_SPEED    = 400;
 const BULLET_COOLDOWN = 200;
 
 const NODE_CONNECT_DIST     = 250;   // px — max distance to auto-link two nodes
-const WANDER_BACKTRACK_CHANCE = 0.05; // odds of returning to previous node
+const WANDER_BACKTRACK_CHANCE = 0.01; // odds of returning to previous node
 
 let lastShotTime = 0;
 
@@ -682,7 +682,7 @@ function updateEnemy(enemy, time) {
     );
 
     if (distToNode < 4) {
-        enemy.previousNodeId = enemy.currentNodeId;
+        //enemy.previousNodeId = enemy.currentNodeId;
 
         let nextId = null;
 
@@ -703,6 +703,7 @@ function updateEnemy(enemy, time) {
         }
 
         if (nextId !== null) {
+            enemy.previousNodeId = enemy.currentNodeId;
             enemy.currentNodeId = nextId;
             enemy.nodeTarget    = { x: navNodes[nextId].x, y: navNodes[nextId].y };
         }
@@ -926,7 +927,7 @@ function drawDebugNavDynamic() {
     debugGraphics.clear();
     for (const enemy of enemies) {
         if (!enemy.nodeTarget) { continue; }
-        debugGraphics.lineStyle(2, 0xffee00, 0.9);
+        debugGraphics.lineStyle(4, 0xffee00, 0.9);
         debugGraphics.beginPath();
         debugGraphics.moveTo(enemy.sprite.x, enemy.sprite.y);
         debugGraphics.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
