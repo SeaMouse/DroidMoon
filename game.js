@@ -24,8 +24,6 @@ let debugGraphics;
 let f1Key;
 
 let player;
-let cursors;
-let wasdKeys;
 let wallLayer;
 let enemies = [];
 let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
@@ -207,7 +205,6 @@ function create() {
     bullets = this.physics.add.group({
         defaultKey:      'bullet',
             maxSize:         20,
-            runChildUpdate:  true
     });
     this.physics.add.collider(bullets, wallLayer, bulletHitWall);
 
@@ -223,7 +220,6 @@ function create() {
     // --- Enemy bullet group ---
     enemyBullets = this.physics.add.group({
         maxSize:        60,
-        runChildUpdate: true
     });
     this.physics.add.collider(enemyBullets, wallLayer, enemyBulletHitWall);
     this.physics.add.overlap(player, enemyBullets, playerHitByEnemyBullet);
@@ -278,7 +274,8 @@ function create() {
             bounceCooldown: 0
         });
 
-        this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
+        //this.physics.add.overlap(bullets, sprite, bulletHitEnemy);
+        this.physics.add.overlap(bullets, enemyGroup, bulletHitEnemy); // << Enemies stop but do not die when I use this instead << Bug 4
     }
 
     // --- Player-enemy contact damage ---
@@ -561,7 +558,7 @@ function bulletHitWall(bullet) {
     deactivateBullet(bullet);
 }
 
-function bulletHitEnemy(enemySprite, bullet) {
+function bulletHitEnemy(bullet, enemySprite) {
     deactivateBullet(bullet);
 
     const enemy = enemies.find(e => e.sprite === enemySprite);
@@ -697,9 +694,6 @@ function updateEnemy(enemy, time) {
         sprite.setVelocity(0);
         return;
     }
-
-    // ── Stuck detection ─────────────────────────────────────────────────
-    // ... rest of function unchanged
 
     // ── Stuck detection ──────────────────────────────────────────────────
     if (time > enemy.lastStuckCheckTime + 1000) {
@@ -895,54 +889,6 @@ function pickWanderNode(enemy) {
 // ─────────────────────────────────────────────
 //  DEBUG — nav graph + enemy target lines
 // ─────────────────────────────────────────────
-function drawDebugNav() {
-    debugGraphics.clear();
-
-    // ── Node connections (thin grey lines) ──────────────────────────────
-    debugGraphics.lineStyle(1, 0x446688, 0.5);
-    for (const node of navNodes) {
-        for (const neighbourId of node.neighbours) {
-            // Only draw each edge once (when our id is the smaller one)
-            if (neighbourId > node.id) {
-                debugGraphics.beginPath();
-                debugGraphics.moveTo(node.x, node.y);
-                debugGraphics.lineTo(navNodes[neighbourId].x, navNodes[neighbourId].y);
-                debugGraphics.strokePath();
-            }
-        }
-    }
-
-    // ── Nav nodes (small filled circles) ────────────────────────────────
-    for (const node of navNodes) {
-        debugGraphics.fillStyle(0x00ccff, 0.85);
-        debugGraphics.fillCircle(node.x, node.y, 5);
-
-        // Node ID label — useful for spotting gaps in the graph
-        scene.debugNodeLabels = [];   // ← added at the top of the function
-
-        const label = scene.add.text(node.x + 6, node.y - 6, String(node.id), {
-            fontFamily: 'monospace',
-            fontSize:   '9px',
-            fill:       '#00ccff'
-        }).setDepth(51).setVisible(false);   // ← starts hidden
-        scene.debugNodeLabels.push(label);  // ← stored so F1 can reach it
-    }
-
-    // ── Enemy → target-node lines (bright yellow) ────────────────────────
-    for (const enemy of enemies) {
-        if (!enemy.nodeTarget) { continue; }
-        debugGraphics.lineStyle(2, 0xffee00, 0.9);
-        debugGraphics.beginPath();
-        debugGraphics.moveTo(enemy.sprite.x, enemy.sprite.y);
-        debugGraphics.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
-        debugGraphics.strokePath();
-
-        // Small dot at the target node so it's obvious which one is chosen
-        debugGraphics.fillStyle(0xffee00, 1);
-        debugGraphics.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
-    }
-}
-
 function drawDebugNavStatic() {
     // Use a separate graphics object so it's never cleared
     const staticGfx = scene.add.graphics();
@@ -977,6 +923,7 @@ function drawDebugNavStatic() {
 }
 
 function drawDebugNavDynamic() {
+    if (!debugGraphics.visible) { return; }
     debugGraphics.clear();
     for (const enemy of enemies) {
         if (!enemy.nodeTarget) { continue; }
