@@ -248,6 +248,7 @@ function create() {
         const startY = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
 
         const sprite = this.physics.add.sprite(startX, startY, def.type);
+        sprite.setAlpha(0);
         sprite.setCollideWorldBounds(true);
         this.physics.add.collider(sprite, wallLayer);
         enemyGroup.add(sprite);
@@ -696,7 +697,9 @@ function updateEnemy(enemy, time) {
 
     const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
     const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
-    sprite.setVisible(los);
+    const targetAlpha = los ? 1 : 0;
+    sprite.alpha += (targetAlpha - sprite.alpha) * 0.10;
+    if (sprite.alpha < 0.01) { sprite.alpha = 0; }
 
     if (enemy.nodeTarget === null) {
         sprite.setVelocity(0);
