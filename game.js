@@ -27,10 +27,16 @@ let player;
 let wallLayer;
 let enemies = [];
 let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
+
 let wallSegments = [];   // [{x1, y1, x2, y2}] — exposed wall edges for raycasting
+let fogRT;
+const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
+const FOG_COLOUR   = 0x000011;
+
 let f2Key;
 let f3Key;
 let f4Key;
+
 let bullets;          // player bullets
 let enemyBullets;     // enemy bullets — separate group so overlaps are unambiguous
 let enemyGroup;
@@ -350,9 +356,9 @@ function create() {
 
     // --- Lift progress bar (hidden until needed) ---
     liftProgressBg = this.add.graphics();
-    liftProgressBg.setScrollFactor(0).setDepth(15).setVisible(false);
+    liftProgressBg.setScrollFactor(0).setDepth(52).setVisible(false);
     liftProgressFill = this.add.graphics();
-    liftProgressFill.setScrollFactor(0).setDepth(16).setVisible(false);
+    liftProgressFill.setScrollFactor(0).setDepth(53).setVisible(false);
 
     // --- Camera ---
     const mapWidth  = map.widthInPixels;
@@ -363,6 +369,11 @@ function create() {
 
     // --- HUD ---
     createHUD(this);
+
+    // --- Dark overlay when Deck is shut down ---
+    fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
+    fogRT.setDepth(40);          // above gameplay, below HUD (HUD is depth 10-20)
+    fogRT.setOrigin(0, 0);       // top-left, so world coords map directly
 
     // --- Debug nav overlay ---
     f1Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F1);
@@ -455,15 +466,13 @@ function update(time) {
     if (Phaser.Input.Keyboard.JustDown(f4Key)) {
         scene.debugVisGfx.setVisible(!scene.debugVisGfx.visible);
     }
-    if (Phaser.Input.Keyboard.JustDown(f4Key)) {
-        scene.debugVisGfx.setVisible(!scene.debugVisGfx.visible);
-    }
     if (scene.debugVisGfx.visible) {
         drawDebugVisibilityPolygon();
     }
     if (scene.debugRayGfx.visible) {
         drawDebugRays();
     }
+    updateFogOfWar();
     drawDebugNavDynamic();
 }
 
@@ -899,22 +908,22 @@ function createHUD(scene) {
         fontFamily: 'monospace',
         fontSize:   '10px',
         fill:       '#aaffcc'
-    }).setScrollFactor(0).setDepth(10);
+    }).setScrollFactor(0).setDepth(50);
 
     const barBg = scene.add.graphics();
     barBg.fillStyle(0x222233, 1);
     barBg.fillRect(BAR_X, BAR_Y + 12, ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT);
-    barBg.setScrollFactor(0).setDepth(10);
+    barBg.setScrollFactor(0).setDepth(50);
 
     energyBarFill = scene.add.graphics();
-    energyBarFill.setScrollFactor(0).setDepth(11);
+    energyBarFill.setScrollFactor(0).setDepth(51);
 
     killText = scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
         fontFamily: 'monospace',
         fontSize:   '12px',
         fill:       '#aaffcc'
     });
-    killText.setScrollFactor(0).setDepth(10);
+    killText.setScrollFactor(0).setDepth(50);
 
     // Deck name label
     const deckDef = deckDefinitions[currentDeck];
@@ -923,7 +932,7 @@ function createHUD(scene) {
         fontSize:   '11px',
         fill:       '#44aaff',
         align:      'right'
-    }).setOrigin(1, 0).setScrollFactor(0).setDepth(10);
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(50);
 
     updateHUD();
 }
@@ -1071,11 +1080,11 @@ function triggerGameOver() {
     gameOverText = scene.add.text(400, 260, 'GAME OVER', {
         fontFamily: 'monospace', fontSize: '48px',
         fill: '#ff2244', stroke: '#000000', strokeThickness: 4
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(20);
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(60);
 
     restartText = scene.add.text(400, 320, 'Press R to restart', {
         fontFamily: 'monospace', fontSize: '20px', fill: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(20);
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(60);
 
     scene.input.keyboard.once('keydown-R', () => {
         // Full reset — clear all deck states and go back to deck 1
@@ -1486,7 +1495,7 @@ function showDeckClearedMessage() {
     const msg = scene.add.text(400, 260, 'DECK POWER DOWN', {
         fontFamily: 'monospace', fontSize: '32px',
         fill: '#44aaff', stroke: '#000000', strokeThickness: 3
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(30).setAlpha(0);
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
 
     scene.tweens.add({
         targets:    msg,
@@ -1620,6 +1629,36 @@ function computeVisibilityPolygon(originX, originY) {
     // Sort by angle so the polygon winds cleanly around the origin.
     hits.sort((a, b) => a.angle - b.angle);
     return hits;
+}
+
+function updateFogOfWar() {
+    if (!fogRT) { return; }
+
+    // 1. Clear last frame's fog
+    fogRT.clear();
+
+    // 2. Fill the whole map with dark fog
+    fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
+
+    // 3. Compute what the player can see
+    const poly = computeVisibilityPolygon(player.x, player.y);
+    if (poly.length < 3) { return; }
+
+    // 4. Erase that polygon from the fog
+    //    We draw a Graphics object containing the polygon, then use it
+    //    to erase from the render texture.
+    const eraseGfx = scene.make.graphics({ x: 0, y: 0 }, false);
+    eraseGfx.fillStyle(0xffffff, 1);
+    eraseGfx.beginPath();
+    eraseGfx.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) {
+        eraseGfx.lineTo(poly[i].x, poly[i].y);
+    }
+    eraseGfx.closePath();
+    eraseGfx.fillPath();
+
+    fogRT.erase(eraseGfx);
+    eraseGfx.destroy();
 }
 
 // ─────────────────────────────────────────────
