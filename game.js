@@ -32,6 +32,8 @@ let wallSegments = [];   // [{x1, y1, x2, y2}] — exposed wall edges for raycas
 let fogRT;
 const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
 const FOG_COLOUR   = 0x000011;
+let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
+const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
 let f2Key;
 let f3Key;
@@ -249,6 +251,7 @@ function create() {
     scene = this;
     gameOver = false;
     playerEnergy    = (playerEnergy > 0) ? playerEnergy : PLAYER_MAX_ENERGY;
+    playerFacing = 0;
     enemies         = [];
     playerInvincible = false;
     lastShotTime     = 0;
@@ -421,24 +424,36 @@ function update(time) {
     }
 
     // --- Player aiming and shooting ---
-    let aimX = 0;
-    let aimY = 0;
+    let rsx = 0, rsy = 0;
     if (pad) {
-        const RSX      = pad.rightStick.x;
-        const RSY      = pad.rightStick.y;
-        const stickOut = Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE;
-        if (!stickOut) {
-            rightStickReset = true;
-        } else if (rightStickReset) {
-            aimX = RSX;
-            aimY = RSY;
-        }
+        rsx = pad.rightStick.x;
+        rsy = pad.rightStick.y;
+    }
+    const rsOut = Math.abs(rsx) > DEAD_ZONE || Math.abs(rsy) > DEAD_ZONE;
+    const lsOut = pad && (Math.abs(pad.leftStick.x) > DEAD_ZONE || Math.abs(pad.leftStick.y) > DEAD_ZONE);
+
+    // Update facing — right stick wins, movement is fallback, otherwise keep last
+    if (rsOut) {
+        playerFacing = Math.atan2(rsy, rsx);
+    } else if (lsOut) {
+        playerFacing = Math.atan2(pad.leftStick.y, pad.leftStick.x);
     }
 
-    if ((aimX !== 0 || aimY !== 0) && time > lastShotTime + BULLET_COOLDOWN) {
-        fireBullet(player.x, player.y, aimX, aimY);
-        lastShotTime = time;
-        rightStickReset = false;
+    // Firing logic — only when the deck still has power
+    if (!isDeckCleared()) {
+        let aimX = 0, aimY = 0;
+        if (!rsOut) {
+            rightStickReset = true;
+        } else if (rightStickReset) {
+            aimX = rsx;
+            aimY = rsy;
+        }
+
+        if ((aimX !== 0 || aimY !== 0) && time > lastShotTime + BULLET_COOLDOWN) {
+            fireBullet(player.x, player.y, aimX, aimY);
+            lastShotTime = time;
+            rightStickReset = false;
+        }
     }
 
     // --- Lift hold-to-activate ---
@@ -1453,6 +1468,13 @@ function reverseEnemyCourse(enemy) {
 }
 
 // ─────────────────────────────────────────────
+//  HELPER - is deck cleared?
+// ─────────────────────────────────────────────
+function isDeckCleared() {
+    return !!(deckStates[currentDeck] && deckStates[currentDeck].cleared);
+}
+
+// ─────────────────────────────────────────────
 //  DECK SHUTDOWN — "lights out" when a deck is cleared
 // ─────────────────────────────────────────────
 const DIM_COLOUR = 0x444466;   // cool blue-grey
@@ -1631,22 +1653,76 @@ function computeVisibilityPolygon(originX, originY) {
     return hits;
 }
 
+function computeConeVisibilityPolygon(originX, originY, facing, halfAngle) {
+    const EPS = 0.0001;
+
+    // Returns angle a − facing, wrapped into [-PI, PI]
+    function relAngle(a) {
+        let d = a - facing;
+        while (d >  Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return d;
+    }
+
+    // Dedupe corners (same as the 360° version)
+    const seen    = new Set();
+    const corners = [];
+    for (const seg of wallSegments) {
+        const k1 = seg.x1 + ',' + seg.y1;
+        if (!seen.has(k1)) { seen.add(k1); corners.push({ x: seg.x1, y: seg.y1 }); }
+        const k2 = seg.x2 + ',' + seg.y2;
+        if (!seen.has(k2)) { seen.add(k2); corners.push({ x: seg.x2, y: seg.y2 }); }
+    }
+
+    const hits = [];
+
+    // Two rays defining the cone edges
+    let h = castRay(originX, originY, facing - halfAngle);
+    hits.push({ x: h.x, y: h.y, rel: -halfAngle });
+    h = castRay(originX, originY, facing + halfAngle);
+    hits.push({ x: h.x, y: h.y, rel:  halfAngle });
+
+    // Rays at corners that fall inside the cone
+    for (const c of corners) {
+        const baseAngle = Math.atan2(c.y - originY, c.x - originX);
+        const baseRel   = relAngle(baseAngle);
+        if (Math.abs(baseRel) >= halfAngle) { continue; }   // outside cone — skip
+
+        for (const offset of [-EPS, 0, EPS]) {
+            const rel = baseRel + offset;
+            if (Math.abs(rel) > halfAngle) { continue; }    // ray would leave the cone
+            const hit = castRay(originX, originY, baseAngle + offset);
+            hits.push({ x: hit.x, y: hit.y, rel: rel });
+        }
+    }
+
+    // Sort hits by angle so the polygon winds cleanly
+    hits.sort((a, b) => a.rel - b.rel);
+
+    // Build the polygon: apex at the player, then sorted hits
+    const poly = [{ x: originX, y: originY }];
+    for (const hit of hits) {
+        poly.push({ x: hit.x, y: hit.y });
+    }
+    return poly;
+}
+
 function updateFogOfWar() {
     if (!fogRT) { return; }
 
-    // 1. Clear last frame's fog
-    fogRT.clear();
+    // Lights only out when the deck has been cleared
+    if (!isDeckCleared()) {
+        fogRT.setVisible(false);
+        return;
+    }
+    fogRT.setVisible(true);
 
-    // 2. Fill the whole map with dark fog
+    fogRT.clear();
     fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
 
-    // 3. Compute what the player can see
-    const poly = computeVisibilityPolygon(player.x, player.y);
+    const poly = computeConeVisibilityPolygon(player.x, player.y, playerFacing, CONE_HALF_ANGLE);
     if (poly.length < 3) { return; }
 
-    // 4. Erase that polygon from the fog
-    //    We draw a Graphics object containing the polygon, then use it
-    //    to erase from the render texture.
     const eraseGfx = scene.make.graphics({ x: 0, y: 0 }, false);
     eraseGfx.fillStyle(0xffffff, 1);
     eraseGfx.beginPath();
