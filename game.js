@@ -29,9 +29,11 @@ let enemies = [];
 let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
 
 let wallSegments = [];   // [{x1, y1, x2, y2}] — exposed wall edges for raycasting
+let wallCorners = [];
 let fogRT;
 const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
 const FOG_COLOUR   = 0x000011;
+const LIGHT_MAX_RANGE = 350;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
 const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
@@ -1571,7 +1573,14 @@ function extractWallSegments() {
         }
     }
 
-    console.log('LIGHT: Extracted ' + wallSegments.length + ' wall segment(s).');
+    const seen = new Set();
+    wallCorners = [];
+    for (const seg of wallSegments) {
+        const k1 = seg.x1 + ',' + seg.y1;
+        if (!seen.has(k1)) { seen.add(k1); wallCorners.push({ x: seg.x1, y: seg.y1 }); }
+        const k2 = seg.x2 + ',' + seg.y2;
+        if (!seen.has(k2)) { seen.add(k2); wallCorners.push({ x: seg.x2, y: seg.y2 }); }
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -1653,8 +1662,17 @@ function computeVisibilityPolygon(originX, originY) {
     return hits;
 }
 
+// ─────────────────────────────────────────────
+//  VISIBILITY POLYGON — cone version (optimised)
+// ─────────────────────────────────────────────
+// Reads the cached `wallCorners` list (built once in extractWallSegments),
+// culls corners that are outside the light's range or outside the cone
+// angle, and clamps any ray hit that lands past the range so the polygon
+// edges fade at a fixed distance instead of trailing off to infinity.
 function computeConeVisibilityPolygon(originX, originY, facing, halfAngle) {
-    const EPS = 0.0001;
+    const EPS         = 0.0001;
+    const RANGE       = LIGHT_MAX_RANGE;
+    const RANGE_SQ    = RANGE * RANGE;
 
     // Returns angle a − facing, wrapped into [-PI, PI]
     function relAngle(a) {
@@ -1664,34 +1682,41 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle) {
         return d;
     }
 
-    // Dedupe corners (same as the 360° version)
-    const seen    = new Set();
-    const corners = [];
-    for (const seg of wallSegments) {
-        const k1 = seg.x1 + ',' + seg.y1;
-        if (!seen.has(k1)) { seen.add(k1); corners.push({ x: seg.x1, y: seg.y1 }); }
-        const k2 = seg.x2 + ',' + seg.y2;
-        if (!seen.has(k2)) { seen.add(k2); corners.push({ x: seg.x2, y: seg.y2 }); }
+    // Casts a ray and clamps the hit point to LIGHT_MAX_RANGE if it
+    // would otherwise land further away than the light reaches.
+    function castClamped(angle) {
+        const hit = castRay(originX, originY, angle);
+        const dx  = hit.x - originX;
+        const dy  = hit.y - originY;
+        if (dx * dx + dy * dy > RANGE_SQ) {
+            hit.x = originX + Math.cos(angle) * RANGE;
+            hit.y = originY + Math.sin(angle) * RANGE;
+        }
+        return hit;
     }
 
     const hits = [];
 
     // Two rays defining the cone edges
-    let h = castRay(originX, originY, facing - halfAngle);
+    let h = castClamped(facing - halfAngle);
     hits.push({ x: h.x, y: h.y, rel: -halfAngle });
-    h = castRay(originX, originY, facing + halfAngle);
+    h = castClamped(facing + halfAngle);
     hits.push({ x: h.x, y: h.y, rel:  halfAngle });
 
-    // Rays at corners that fall inside the cone
-    for (const c of corners) {
-        const baseAngle = Math.atan2(c.y - originY, c.x - originX);
+    // Rays at corners that are (a) within range and (b) inside the cone
+    for (const c of wallCorners) {
+        const dx = c.x - originX;
+        const dy = c.y - originY;
+        if (dx * dx + dy * dy > RANGE_SQ) { continue; }   // out of range — skip
+
+        const baseAngle = Math.atan2(dy, dx);
         const baseRel   = relAngle(baseAngle);
-        if (Math.abs(baseRel) >= halfAngle) { continue; }   // outside cone — skip
+        if (Math.abs(baseRel) >= halfAngle) { continue; }  // outside cone — skip
 
         for (const offset of [-EPS, 0, EPS]) {
             const rel = baseRel + offset;
-            if (Math.abs(rel) > halfAngle) { continue; }    // ray would leave the cone
-            const hit = castRay(originX, originY, baseAngle + offset);
+            if (Math.abs(rel) > halfAngle) { continue; }   // ray would leave the cone
+            const hit = castClamped(baseAngle + offset);
             hits.push({ x: hit.x, y: hit.y, rel: rel });
         }
     }
