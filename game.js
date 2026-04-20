@@ -33,7 +33,7 @@ let wallCorners = [];
 let fogRT;
 const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
 const FOG_COLOUR   = 0x000011;
-const LIGHT_MAX_RANGE = 650;   // pixels — tweak to taste
+const LIGHT_MAX_RANGE = 550;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
 const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
@@ -1703,6 +1703,16 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range
     h = castClamped(facing + halfAngle);
     hits.push({ x: h.x, y: h.y, rel:  halfAngle });
 
+    // Arc-filling rays across the cone — in open space these all clamp to
+    // LIGHT_MAX_RANGE, so connecting them produces a curved leading edge
+    // instead of a straight line between the two cone-edge rays.
+    const ARC_RAY_COUNT = 24;
+    for (let i = 1; i < ARC_RAY_COUNT; i++) {
+        const rel = -halfAngle + (i / ARC_RAY_COUNT) * (2 * halfAngle);
+        const hit = castClamped(facing + rel);
+        hits.push({ x: hit.x, y: hit.y, rel: rel });
+    }
+
     // Rays at corners that are (a) within range and (b) inside the cone
     for (const c of wallCorners) {
         const dx = c.x - originX;
@@ -1739,7 +1749,7 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range
 // Because erasures stack, the innermost area is erased three times
 // (brightest), the middle ring twice, and the outer ring only once
 // (dimmest) — giving the stepped falloff shown in the design sketch.
-const LIGHT_BAND_ERASE_ALPHA = 0.45;   // tune for contrast between bands
+const LIGHT_BAND_ERASE_ALPHA = 0.35;   // tune for contrast between bands
 
 function updateFogOfWar() {
     if (!fogRT) { return; }
