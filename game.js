@@ -33,7 +33,7 @@ let wallCorners = [];
 let fogRT;
 const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
 const FOG_COLOUR   = 0x000011;
-const LIGHT_MAX_RANGE = 350;   // pixels — tweak to taste
+const LIGHT_MAX_RANGE = 650;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
 const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
@@ -1669,10 +1669,10 @@ function computeVisibilityPolygon(originX, originY) {
 // culls corners that are outside the light's range or outside the cone
 // angle, and clamps any ray hit that lands past the range so the polygon
 // edges fade at a fixed distance instead of trailing off to infinity.
-function computeConeVisibilityPolygon(originX, originY, facing, halfAngle) {
-    const EPS         = 0.0001;
-    const RANGE       = LIGHT_MAX_RANGE;
-    const RANGE_SQ    = RANGE * RANGE;
+function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range) {
+    const EPS      = 0.0001;
+    const RANGE    = range;
+    const RANGE_SQ = RANGE * RANGE;
 
     // Returns angle a − facing, wrapped into [-PI, PI]
     function relAngle(a) {
@@ -1732,6 +1732,15 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle) {
     return poly;
 }
 
+// ─────────────────────────────────────────────
+//  FOG OF WAR — three-band light cone
+// ─────────────────────────────────────────────
+// Draws three nested cones and erases each with the same partial alpha.
+// Because erasures stack, the innermost area is erased three times
+// (brightest), the middle ring twice, and the outer ring only once
+// (dimmest) — giving the stepped falloff shown in the design sketch.
+const LIGHT_BAND_ERASE_ALPHA = 0.45;   // tune for contrast between bands
+
 function updateFogOfWar() {
     if (!fogRT) { return; }
 
@@ -1745,21 +1754,33 @@ function updateFogOfWar() {
     fogRT.clear();
     fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
 
-    const poly = computeConeVisibilityPolygon(player.x, player.y, playerFacing, CONE_HALF_ANGLE);
-    if (poly.length < 3) { return; }
+    // Outer → inner. Each pass erases a smaller cone on top of the
+    // previous one, so alpha removal accumulates toward the centre.
+    const ranges = [
+        LIGHT_MAX_RANGE,
+        LIGHT_MAX_RANGE * 2 / 3,
+        LIGHT_MAX_RANGE * 1 / 3,
+    ];
 
-    const eraseGfx = scene.make.graphics({ x: 0, y: 0 }, false);
-    eraseGfx.fillStyle(0xffffff, 1);
-    eraseGfx.beginPath();
-    eraseGfx.moveTo(poly[0].x, poly[0].y);
-    for (let i = 1; i < poly.length; i++) {
-        eraseGfx.lineTo(poly[i].x, poly[i].y);
+    for (const range of ranges) {
+        const poly = computeConeVisibilityPolygon(
+            player.x, player.y, playerFacing, CONE_HALF_ANGLE, range
+        );
+        if (poly.length < 3) { continue; }
+
+        const eraseGfx = scene.make.graphics({ x: 0, y: 0 }, false);
+        eraseGfx.fillStyle(0xffffff, LIGHT_BAND_ERASE_ALPHA);
+        eraseGfx.beginPath();
+        eraseGfx.moveTo(poly[0].x, poly[0].y);
+        for (let i = 1; i < poly.length; i++) {
+            eraseGfx.lineTo(poly[i].x, poly[i].y);
+        }
+        eraseGfx.closePath();
+        eraseGfx.fillPath();
+
+        fogRT.erase(eraseGfx);
+        eraseGfx.destroy();
     }
-    eraseGfx.closePath();
-    eraseGfx.fillPath();
-
-    fogRT.erase(eraseGfx);
-    eraseGfx.destroy();
 }
 
 // ─────────────────────────────────────────────
