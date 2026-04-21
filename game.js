@@ -108,7 +108,7 @@ const deckDefinitions = {
     deck1: {
         mapKey:      'level1',
         mapFile:     'assets/level1.tmj',
-        label:       'Deck 1 — Bridge',
+        label:       'Deck 1 - Bridge',
         playerStart: { x: 82, y: 82 },
         enemies: [
             { type: 'cleaner',        startTile: {x: 4,  y: 2}  },
@@ -120,7 +120,7 @@ const deckDefinitions = {
     deck2: {
         mapKey:      'level2',
         mapFile:     'assets/level2.tmj',
-        label:       'Deck 2 — Engineering',
+        label:       'Deck 2 - Engineering',
         playerStart: { x: 82, y: 82 },
         enemies: [
             // Add your enemies here once the map is ready
@@ -129,7 +129,7 @@ const deckDefinitions = {
     deck3: {
         mapKey:      'level3',
         mapFile:     'assets/level3.tmj',
-        label:       'Deck 3 — Cargo Bay',
+        label:       'Deck 3 - Cargo Bay',
         playerStart: { x: 82, y: 82 },
         enemies: [
             // Add your enemies here once the map is ready
@@ -281,6 +281,7 @@ function create() {
     wallLayer.setCollision(1);
     buildNavGraph(map);
     extractWallSegments();
+    extractWallCorners();
 
     // --- Player texture (only generate once) ---
     if (!this.textures.exists('player')) {
@@ -1572,14 +1573,36 @@ function extractWallSegments() {
             }
         }
     }
+}
 
-    const seen = new Set();
+function extractWallCorners() {
     wallCorners = [];
-    for (const seg of wallSegments) {
-        const k1 = seg.x1 + ',' + seg.y1;
-        if (!seen.has(k1)) { seen.add(k1); wallCorners.push({ x: seg.x1, y: seg.y1 }); }
-        const k2 = seg.x2 + ',' + seg.y2;
-        if (!seen.has(k2)) { seen.add(k2); wallCorners.push({ x: seg.x2, y: seg.y2 }); }
+    const W = wallLayer.width;
+    const H = wallLayer.height;
+
+    // Grid vertices: one more in each dimension than there are tiles
+    for (let vy = 0; vy <= H; vy++) {
+        for (let vx = 0; vx <= W; vx++) {
+            // The four tiles meeting at this vertex
+            const tl = isWallTile(wallLayer, vx - 1, vy - 1);
+            const tr = isWallTile(wallLayer, vx,     vy - 1);
+            const bl = isWallTile(wallLayer, vx - 1, vy);
+            const br = isWallTile(wallLayer, vx,     vy);
+
+            const count = (tl?1:0) + (tr?1:0) + (bl?1:0) + (br?1:0);
+
+            // Interior of open space or interior of solid wall — skip
+            if (count === 0 || count === 4) { continue; }
+
+            // Exactly 2 walls — only keep if they're diagonal
+            if (count === 2) {
+                const diagonal = (tl && br) || (tr && bl);
+                if (!diagonal) { continue; }   // straight edge, no corner
+            }
+
+            // 1, 3, or diagonal-2 → real corner
+            wallCorners.push({ x: vx * TILE_SIZE, y: vy * TILE_SIZE });
+        }
     }
 }
 
@@ -1809,11 +1832,10 @@ function drawDebugWallSegments() {
         gfx.strokePath();
     }
 
-    // Corner dots — these are the points we'll cast rays at in Step 3
+    // Corner dots — only the real corners we cast rays at
     gfx.fillStyle(0xff8800, 1);
-    for (const seg of wallSegments) {
-        gfx.fillCircle(seg.x1, seg.y1, 3);
-        gfx.fillCircle(seg.x2, seg.y2, 3);
+    for (const c of wallCorners) {
+        gfx.fillCircle(c.x, c.y, 3);
     }
 
     gfx.setVisible(false);
