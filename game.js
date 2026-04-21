@@ -225,6 +225,8 @@ let lastShotTime = 0;
 let currentDeck    = 'deck1';           // starting deck
 let deckStates     = {};                // persisted between deck switches
 let playerSpawnPos = null;              // set before switching; null = use default
+let lastDeck       = null;    // which deck we arrived FROM via lift (null = fresh start)
+let liftInputGated = false;   // require input release before a new hold can begin
 
 // ─────────────────────────────────────────────
 //  DECK DEFINITIONS
@@ -403,6 +405,7 @@ function create() {
     liftZones        = [];
     playerOnLift     = null;
     liftHoldStart    = 0;
+    liftInputGated = false;
     deckSelectionActive = false;
     deckSelectionItems  = [];
     deckSelectionIndex  = 0;
@@ -501,6 +504,21 @@ function create() {
     // --- Lift zones ---
     liftZoneGroup = this.physics.add.staticGroup();
     parseLiftZones(map);
+    // --- Arrival: if we came from another deck via lift, snap to the matching lift ---
+    if (lastDeck) {
+        const arrivalLift = liftZones.find(lift => lift.decks.includes(lastDeck));
+        if (arrivalLift) {
+            player.setPosition(arrivalLift.x, arrivalLift.y);
+            liftInputGated = true;   // don't re-trigger the lift menu we just closed
+            console.log('LIFTS: Arrived on ' + currentDeck +
+            ' at lift connecting to ' + lastDeck + '.');
+        } else {
+            console.warn('LIFTS: No lift on ' + currentDeck +
+            ' connects back to ' + lastDeck +
+            ' — falling back to default spawn. Check the "Decks" property on your lifts.');
+        }
+        lastDeck = null;
+    }
 
     // --- Lift progress bar (hidden until needed) ---
     liftProgressBg = this.add.graphics();
@@ -733,6 +751,14 @@ function updateLiftHold(time, pad) {
 
     const fKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     if (fKey.isDown) { holdInput = true; }
+    // If we just arrived via lift, wait for the player to release the stick
+    // before we start counting a new hold. Otherwise a continuous hold across
+    // the scene restart would pop the menu open again.
+    if (liftInputGated) {
+        if (!holdInput) { liftInputGated = false; }
+        playerOnLift = null;
+        return;
+    }
 
     playerOnLift = findPlayerLiftOverlap();
 
@@ -925,23 +951,10 @@ function cancelDeckSelection() {
 //  DECK SWITCHING
 // ─────────────────────────────────────────────
 function switchToDeck(targetDeck) {
-    // 1. Save current deck's enemy state
     saveDeckState(currentDeck);
-
-    // 2. Find where the player should spawn on the target deck.
-    //    We look for a lift on the TARGET deck whose "decks" list
-    //    includes the deck we're coming FROM.  Since we can't read
-    //    the target map's objects without loading it, we store the
-    //    default start for now.  After the map loads in create(),
-    //    we'll adjust if a matching lift is found.
-    //
-    //    For the POC we simply use the target deck's default start
-    //    position. A later enhancement can scan the loaded map for
-    //    matching lift objects and snap to one.
-    playerSpawnPos = null;   // will fall back to deckDef.playerStart
-
-    // 3. Switch
-    currentDeck = targetDeck;
+    lastDeck       = currentDeck;   // remember source so create() can snap to a matching lift
+    playerSpawnPos = null;
+    currentDeck    = targetDeck;
     scene.scene.restart();
 }
 
@@ -1608,6 +1621,8 @@ function resetGameState() {
     deckStates     = {};
     currentDeck    = 'deck1';
     playerSpawnPos = null;
+    lastDeck       = null;          // ← new
+    liftInputGated = false;         // ← new
     playerEnergy   = PLAYER_MAX_ENERGY;
     killCount      = 0;
 }
