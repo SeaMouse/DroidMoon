@@ -1,3 +1,141 @@
+// ─────────────────────────────────────────────
+//  SCENE: TITLE
+// ─────────────────────────────────────────────
+const titleScene = {
+    key: 'TitleScene',
+    create: function() {
+        // Fresh state every time we land on the title
+        resetGameState();
+
+        this.add.rectangle(0, 0, 800, 600, 0x0a0a18).setOrigin(0);
+
+        this.add.text(400, 150, 'DECK RUNNER', {
+            fontFamily: 'monospace', fontSize: '56px',
+            fill: '#44ffaa', stroke: '#000000', strokeThickness: 4
+        }).setOrigin(0.5);
+
+        this.add.text(400, 210, '— a Paradroid-style POC —', {
+            fontFamily: 'monospace', fontSize: '14px', fill: '#88bbdd'
+        }).setOrigin(0.5);
+
+        this.add.text(400, 300, 'Clear every deck of hostile droids.', {
+            fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
+        }).setOrigin(0.5);
+        this.add.text(400, 330, 'Use lifts to move between decks.', {
+            fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
+        }).setOrigin(0.5);
+
+        this.add.text(400, 410, 'Move:          Left stick', {
+            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(400, 430, 'Aim & Fire:    Right stick', {
+            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(400, 450, 'Lift activate: Hold F or right stick while on a lift', {
+            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+
+        const prompt = this.add.text(400, 530, 'Press any key or button to begin', {
+            fontFamily: 'monospace', fontSize: '20px', fill: '#ffee00'
+        }).setOrigin(0.5);
+
+        this.tweens.add({
+            targets: prompt, alpha: 0.35,
+            duration: 700, yoyo: true, repeat: -1
+        });
+
+        this.input.keyboard.once('keydown', () => this.scene.start('GameScene'));
+        this._padStarted = false;
+    },
+    update: function() {
+        if (this._padStarted) { return; }
+        const pad = this.input.gamepad.getPad(0);
+        if (!pad) { return; }
+        for (const btn of pad.buttons) {
+            if (btn && btn.pressed) {
+                this._padStarted = true;
+                this.scene.start('GameScene');
+                return;
+            }
+        }
+    }
+};
+
+// ─────────────────────────────────────────────
+//  SCENE: GAMEPLAY  (wraps your existing preload/create/update)
+// ─────────────────────────────────────────────
+const gameScene = {
+    key: 'GameScene',
+    preload: preload,
+    create:  create,
+    update:  update
+};
+
+// ─────────────────────────────────────────────
+//  SCENE: END  (handles both win and lose)
+// ─────────────────────────────────────────────
+const endScene = {
+    key: 'EndScene',
+    init: function(data) {
+        this.result = (data && data.result) ? data.result : 'lost';
+    },
+    create: function() {
+        const won = (this.result === 'won');
+
+        this.add.rectangle(0, 0, 800, 600,
+                           won ? 0x0a1a10 : 0x1a0a0a).setOrigin(0);
+
+                           this.add.text(400, 200, won ? 'SHIP CLEARED' : 'GAME OVER', {
+                               fontFamily: 'monospace', fontSize: '64px',
+                               fill: won ? '#44ff88' : '#ff3344',
+                               stroke: '#000000', strokeThickness: 4
+                           }).setOrigin(0.5);
+
+                           const msg = won
+                           ? 'Every deck is quiet. Every droid is scrap.'
+                           : 'The droids won this round.';
+                           this.add.text(400, 290, msg, {
+                               fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
+                           }).setOrigin(0.5);
+
+                           this.add.text(400, 340, 'Droids destroyed: ' + killCount, {
+                               fontFamily: 'monospace', fontSize: '14px', fill: '#aaaacc'
+                           }).setOrigin(0.5);
+
+                           const prompt = this.add.text(400, 460, 'Press any key or button to return to title', {
+                               fontFamily: 'monospace', fontSize: '16px', fill: '#ffee00'
+                           }).setOrigin(0.5);
+
+                           this.tweens.add({
+                               targets: prompt, alpha: 0.35,
+                               duration: 700, yoyo: true, repeat: -1
+                           });
+
+                           // Brief input lockout so a held button doesn't instantly skip the screen
+                           this._ready = false;
+                           this.time.delayedCall(600, () => {
+                               this._ready = true;
+                               this.input.keyboard.once('keydown', () => this.scene.start('TitleScene'));
+                           });
+                           this._padAdvanced = false;
+    },
+    update: function() {
+        if (!this._ready || this._padAdvanced) { return; }
+        const pad = this.input.gamepad.getPad(0);
+        if (!pad) { return; }
+        for (const btn of pad.buttons) {
+            if (btn && btn.pressed) {
+                this._padAdvanced = true;
+                this.scene.start('TitleScene');
+                return;
+            }
+        }
+    }
+};
+
+// ─────────────────────────────────────────────
+//  GAME CONFIG
+// ─────────────────────────────────────────────
 const config = {
     type: Phaser.AUTO,
     width: 800,
@@ -11,11 +149,7 @@ const config = {
     input: {
         gamepad: true
     },
-    scene: {
-        preload: preload,
-        create: create,
-        update: update
-    }
+    scene: [titleScene, gameScene, endScene]
 };
 
 const game = new Phaser.Game(config);
@@ -123,7 +257,11 @@ const deckDefinitions = {
         label:       'Deck 2 - Engineering',
         playerStart: { x: 82, y: 82 },
         enemies: [
-            // Add your enemies here once the map is ready
+            { type: 'cleaner',         startTile: {x: 6,  y: 4}  },
+            { type: 'patrol_drone',    startTile: {x: 10, y: 10} },
+            { type: 'patrol_drone',    startTile: {x: 3,  y: 14} },
+            { type: 'security_light',  startTile: {x: 14, y: 6}  },
+            { type: 'security_heavy',  startTile: {x: 8,  y: 16} },
         ],
     },
     deck3: {
@@ -132,7 +270,11 @@ const deckDefinitions = {
         label:       'Deck 3 - Cargo Bay',
         playerStart: { x: 82, y: 82 },
         enemies: [
-            // Add your enemies here once the map is ready
+            { type: 'cleaner',         startTile: {x: 5,  y: 5}  },
+            { type: 'security_light',  startTile: {x: 8,  y: 12} },
+            { type: 'security_light',  startTile: {x: 16, y: 3}  },
+            { type: 'security_heavy',  startTile: {x: 11, y: 15} },
+            { type: 'security_heavy',  startTile: {x: 2,  y: 8}  },
         ],
     },
 };
@@ -1095,23 +1237,8 @@ function triggerGameOver() {
 
     for (const enemy of enemies) { enemy.sprite.setVelocity(0); }
 
-    gameOverText = scene.add.text(400, 260, 'GAME OVER', {
-        fontFamily: 'monospace', fontSize: '48px',
-        fill: '#ff2244', stroke: '#000000', strokeThickness: 4
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(60);
-
-    restartText = scene.add.text(400, 320, 'Press R to restart', {
-        fontFamily: 'monospace', fontSize: '20px', fill: '#ffffff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(60);
-
-    scene.input.keyboard.once('keydown-R', () => {
-        // Full reset — clear all deck states and go back to deck 1
-        deckStates     = {};
-        currentDeck    = 'deck1';
-        playerSpawnPos = null;
-        playerEnergy   = PLAYER_MAX_ENERGY;
-        killCount      = 0;
-        scene.scene.restart();
+    scene.time.delayedCall(1200, () => {
+        scene.scene.start('EndScene', { result: 'lost' });
     });
 }
 
@@ -1477,6 +1604,26 @@ function isDeckCleared() {
     return !!(deckStates[currentDeck] && deckStates[currentDeck].cleared);
 }
 
+function resetGameState() {
+    deckStates     = {};
+    currentDeck    = 'deck1';
+    playerSpawnPos = null;
+    playerEnergy   = PLAYER_MAX_ENERGY;
+    killCount      = 0;
+}
+
+function areAllDecksCleared() {
+    for (const deckName of Object.keys(deckDefinitions)) {
+        const def = deckDefinitions[deckName];
+        // Decks with no enemies don't count — they can never be "cleared".
+        if (!def.enemies || def.enemies.length === 0) { continue; }
+        if (!deckStates[deckName] || !deckStates[deckName].cleared) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ─────────────────────────────────────────────
 //  DECK SHUTDOWN — "lights out" when a deck is cleared
 // ─────────────────────────────────────────────
@@ -1501,6 +1648,13 @@ function checkDeckClearance() {
     if (!deckDef || !deckDef.enemies || deckDef.enemies.length === 0) { return; }
 
     triggerDeckShutdown();
+
+    // Was that the last deck with enemies on it?
+    if (areAllDecksCleared()) {
+        scene.time.delayedCall(2500, () => {
+            scene.scene.start('EndScene', { result: 'won' });
+        });
+    }
 }
 
 function triggerDeckShutdown() {
