@@ -376,6 +376,162 @@ const enemyTypes = {
 };
 
 // ─────────────────────────────────────────────
+//  ENEMY CLASS
+// ─────────────────────────────────────────────
+class Enemy {
+    constructor(scene, typeName, x, y, opts = {}) {
+        const typeDef = enemyTypes[typeName];
+        if (!typeDef) {
+            throw new Error('Unknown enemy type: ' + typeName);
+        }
+
+        // --- Sprite setup ---
+        const sprite = scene.physics.add.sprite(x, y, typeName);
+        sprite.setAlpha(0);
+        sprite.setCollideWorldBounds(true);
+        scene.physics.add.collider(sprite, wallLayer);
+        enemyGroup.add(sprite);
+        sprite.setData('entity', this);
+
+        // --- Nav state ---
+        // If a node id was passed in (restored from save), trust it.
+        // Otherwise pick the nearest node to our spawn position.
+        let nodeId, target;
+        if (opts.currentNodeId !== undefined && navNodes[opts.currentNodeId]) {
+            const n = navNodes[opts.currentNodeId];
+            nodeId = n.id;
+            target = { x: n.x, y: n.y };
+        } else {
+            const nearest = findNearestNode(x, y);
+            nodeId = nearest ? nearest.id : null;
+            target = nearest ? { x: nearest.x, y: nearest.y } : null;
+        }
+
+        // --- Per-instance fields ---
+        this.sprite         = sprite;
+        this.typeName       = typeName;
+        this.label          = typeDef.label;
+        this.hp             = opts.hp ?? typeDef.hp;
+        this.contactDamage  = typeDef.contactDamage;
+        this.speed          = typeDef.speed;
+        this.detectRange    = typeDef.detectRange;
+        this.weaponType     = typeDef.weaponType;
+
+        this.currentNodeId  = nodeId;
+        this.previousNodeId = opts.previousNodeId ?? null;
+        this.nodeTarget     = target;
+
+        this.lastShotTime       = 0;
+        this.lastStuckCheckTime = 0;
+        this.lastStuckCheckPos  = { x: x, y: y };
+        this.bounceCooldown     = 0;
+        this.knockbackUntil     = 0;
+    }
+
+    update(time) {
+        const sprite = this.sprite;
+
+        const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
+        const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
+        const targetAlpha  = los ? 1 : 0;
+        sprite.alpha += (targetAlpha - sprite.alpha) * 0.10;
+        if (sprite.alpha < 0.01) { sprite.alpha = 0; }
+
+        if (this.nodeTarget === null) {
+            sprite.setVelocity(0);
+            return;
+        }
+
+        if (time < this.knockbackUntil) {
+            if (this.weaponType !== null && los && distToPlayer < this.detectRange) {
+                enemyShoot(this, time);
+            }
+            return;
+        }
+
+        // ── Stuck detection ──────────────────────────────────────────────
+        if (time > this.knockbackUntil && time > this.lastStuckCheckTime + 1000) {
+            const movedDist = Phaser.Math.Distance.Between(
+                sprite.x, sprite.y,
+                this.lastStuckCheckPos.x, this.lastStuckCheckPos.y
+            );
+            if (movedDist < 8) {
+                if (this.previousNodeId !== null) {
+                    const prevNode = navNodes[this.previousNodeId];
+                    this.currentNodeId  = this.previousNodeId;
+                    this.previousNodeId = null;
+                    this.nodeTarget     = { x: prevNode.x, y: prevNode.y };
+                } else {
+                    const nearestNode = findNearestNode(sprite.x, sprite.y);
+                    if (nearestNode) {
+                        this.currentNodeId = nearestNode.id;
+                        this.nodeTarget    = { x: nearestNode.x, y: nearestNode.y };
+                    }
+                }
+            }
+            this.lastStuckCheckTime = time;
+            this.lastStuckCheckPos  = { x: sprite.x, y: sprite.y };
+        }
+
+        // ── Arrived at target node? ─────────────────────────────────────
+        const distToNode = Phaser.Math.Distance.Between(
+            sprite.x, sprite.y, this.nodeTarget.x, this.nodeTarget.y
+        );
+
+        if (distToNode < 4) {
+            let nextId = null;
+
+            if (this.weaponType !== null) {
+                if (los && distToPlayer < this.detectRange) {
+                    const playerNode = findNearestNode(player.x, player.y);
+                    if (playerNode) {
+                        const path = bfsPath(this.currentNodeId, playerNode.id);
+                        if (path && path.length > 0) {
+                            nextId = path[0];
+                        }
+                    }
+                }
+            }
+
+            if (nextId === null) {
+                nextId = pickWanderNode(this);
+            }
+
+            if (nextId !== null) {
+                this.previousNodeId = this.currentNodeId;
+                this.currentNodeId  = nextId;
+                this.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+            }
+        }
+
+        // ── Move toward current target node ──────────────────────────────
+        const moveAngle = Phaser.Math.Angle.Between(
+            sprite.x, sprite.y, this.nodeTarget.x, this.nodeTarget.y
+        );
+        sprite.setVelocityX(Math.cos(moveAngle) * this.speed);
+        sprite.setVelocityY(Math.sin(moveAngle) * this.speed);
+
+        // ── Ranged attack ────────────────────────────────────────────────
+        if (this.weaponType !== null) {
+            if (los && distToPlayer < this.detectRange) {
+                enemyShoot(this, time);
+            }
+        }
+    }
+
+    serialise() {
+        return {
+            typeName:       this.typeName,
+            x:              this.sprite.x,
+            y:              this.sprite.y,
+            hp:             this.hp,
+            currentNodeId:  this.currentNodeId,
+            previousNodeId: this.previousNodeId,
+        };
+    }
+}
+
+// ─────────────────────────────────────────────
 //  PRELOAD
 // ─────────────────────────────────────────────
 function preload() {
@@ -631,7 +787,7 @@ function update(time) {
 
     // --- Enemy AI ---
     for (const enemy of enemies) {
-        updateEnemy(enemy, time);
+        enemy.update(time);
     }
 
     // --- Debug toggle ---
@@ -935,14 +1091,7 @@ function switchToDeck(targetDeck) {
 //  DECK STATE — save / restore
 // ─────────────────────────────────────────────
 function saveDeckState(deckName) {
-    const saved = enemies.map(e => ({
-        typeName:      e.typeName,
-        x:             e.sprite.x,
-        y:             e.sprite.y,
-        hp:            e.hp,
-        currentNodeId: e.currentNodeId,
-        previousNodeId: e.previousNodeId,
-    }));
+    const saved = enemies.map(e => e.serialise());
 
     const wasCleared = deckStates[deckName] && deckStates[deckName].cleared;
     deckStates[deckName] = {
@@ -955,83 +1104,27 @@ function saveDeckState(deckName) {
 
 function restoreEnemiesFromState(state) {
     for (const saved of state.enemies) {
-        const typeDef = enemyTypes[saved.typeName];
-        if (!typeDef) { continue; }
+        if (!enemyTypes[saved.typeName]) { continue; }
 
-        const sprite = scene.physics.add.sprite(saved.x, saved.y, saved.typeName);
-        sprite.setAlpha(0);
-        sprite.setCollideWorldBounds(true);
-        scene.physics.add.collider(sprite, wallLayer);
-        enemyGroup.add(sprite);
-
-        const node   = navNodes[saved.currentNodeId] || findNearestNode(saved.x, saved.y);
-        const nodeId = node ? node.id : null;
-        const target = node ? { x: node.x, y: node.y } : null;
-
-        const enemy = {
-            sprite:         sprite,
-            typeName:       saved.typeName,
-            label:          typeDef.label,
-            currentNodeId:  nodeId,
-            previousNodeId: saved.previousNodeId,
-            nodeTarget:     target,
+        enemies.push(new Enemy(scene, saved.typeName, saved.x, saved.y, {
             hp:             saved.hp,
-            contactDamage:  typeDef.contactDamage,
-            speed:          typeDef.speed,
-            detectRange:    typeDef.detectRange,
-            weaponType:     typeDef.weaponType,
-            lastShotTime:   0,
-            lastStuckCheckTime: 0,
-            lastStuckCheckPos:  { x: saved.x, y: saved.y },
-            bounceCooldown: 0,
-            knockbackUntil: 0,
-        };
-        sprite.setData('entity', enemy);
-        enemies.push(enemy);
+            currentNodeId:  saved.currentNodeId,
+            previousNodeId: saved.previousNodeId,
+        }));
     }
 }
 
 function spawnFreshEnemies(enemyDefs) {
     for (const def of enemyDefs) {
-        const typeDef = enemyTypes[def.type];
-        if (!typeDef) {
+        if (!enemyTypes[def.type]) {
             console.warn('Unknown enemy type "' + def.type + '" — skipping.');
             continue;
         }
 
-        const startX = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
-        const startY = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
+        const x = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
+        const y = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
 
-        const sprite = scene.physics.add.sprite(startX, startY, def.type);
-        sprite.setAlpha(0);
-        sprite.setCollideWorldBounds(true);
-        scene.physics.add.collider(sprite, wallLayer);
-        enemyGroup.add(sprite);
-
-        const startNode = findNearestNode(startX, startY);
-        const initNodeId = startNode ? startNode.id : null;
-        const initTarget = startNode ? { x: startNode.x, y: startNode.y } : null;
-
-        const enemy = {
-            sprite:         sprite,
-            typeName:       def.type,
-            label:          typeDef.label,
-            currentNodeId:  initNodeId,
-            previousNodeId: null,
-            nodeTarget:     initTarget,
-            hp:             typeDef.hp,
-            contactDamage:  typeDef.contactDamage,
-            speed:          typeDef.speed,
-            detectRange:    typeDef.detectRange,
-            weaponType:     typeDef.weaponType,
-            lastShotTime:   0,
-            lastStuckCheckTime: 0,
-            lastStuckCheckPos:  { x: startX, y: startY },
-            bounceCooldown: 0,
-            knockbackUntil: 0,
-        };
-        sprite.setData('entity', enemy);
-        enemies.push(enemy);
+        enemies.push(new Enemy(scene, def.type, x, y));
     }
 }
 
@@ -1367,100 +1460,6 @@ function hasLineOfSight(x1, y1, x2, y2, width) {
         }
     }
     return true;
-}
-
-// ─────────────────────────────────────────────
-//  ENEMY AI  (node-based patrol + pursuit)
-// ─────────────────────────────────────────────
-function updateEnemy(enemy, time) {
-    const sprite = enemy.sprite;
-
-    const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
-    const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
-    const targetAlpha = los ? 1 : 0;
-    sprite.alpha += (targetAlpha - sprite.alpha) * 0.10;
-    if (sprite.alpha < 0.01) { sprite.alpha = 0; }
-
-    if (enemy.nodeTarget === null) {
-        sprite.setVelocity(0);
-        return;
-    }
-
-    if (time < enemy.knockbackUntil) {
-        if (enemy.weaponType !== null && los && distToPlayer < enemy.detectRange) {
-            enemyShoot(enemy, time);
-        }
-        return;
-    }
-
-    // ── Stuck detection ──────────────────────────────────────────────────
-    if (time > enemy.knockbackUntil && time > enemy.lastStuckCheckTime + 1000) {
-        const movedDist = Phaser.Math.Distance.Between(
-            sprite.x, sprite.y,
-            enemy.lastStuckCheckPos.x, enemy.lastStuckCheckPos.y
-        );
-        if (movedDist < 8) {
-            if (enemy.previousNodeId !== null) {
-                const prevNode = navNodes[enemy.previousNodeId];
-                enemy.currentNodeId  = enemy.previousNodeId;
-                enemy.previousNodeId = null;
-                enemy.nodeTarget     = { x: prevNode.x, y: prevNode.y };
-            } else {
-                const nearestNode = findNearestNode(sprite.x, sprite.y);
-                if (nearestNode) {
-                    enemy.currentNodeId = nearestNode.id;
-                    enemy.nodeTarget    = { x: nearestNode.x, y: nearestNode.y };
-                }
-            }
-        }
-        enemy.lastStuckCheckTime = time;
-        enemy.lastStuckCheckPos  = { x: sprite.x, y: sprite.y };
-    }
-
-    // ── Arrived at target node? ──────────────────────────────────────────
-    const distToNode = Phaser.Math.Distance.Between(
-        sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
-    );
-
-    if (distToNode < 4) {
-        let nextId = null;
-
-        if (enemy.weaponType !== null) {
-            if (los && distToPlayer < enemy.detectRange) {
-                const playerNode = findNearestNode(player.x, player.y);
-                if (playerNode) {
-                    const path = bfsPath(enemy.currentNodeId, playerNode.id);
-                    if (path && path.length > 0) {
-                        nextId = path[0];
-                    }
-                }
-            }
-        }
-
-        if (nextId === null) {
-            nextId = pickWanderNode(enemy);
-        }
-
-        if (nextId !== null) {
-            enemy.previousNodeId = enemy.currentNodeId;
-            enemy.currentNodeId  = nextId;
-            enemy.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
-        }
-    }
-
-    // ── Move toward current target node ─────────────────────────────────
-    const moveAngle = Phaser.Math.Angle.Between(
-        sprite.x, sprite.y, enemy.nodeTarget.x, enemy.nodeTarget.y
-    );
-    sprite.setVelocityX(Math.cos(moveAngle) * enemy.speed);
-    sprite.setVelocityY(Math.sin(moveAngle) * enemy.speed);
-
-    // ── Ranged attack ────────────────────────────────────────────────────
-    if (enemy.weaponType !== null) {
-        if (los && distToPlayer < enemy.detectRange) {
-            enemyShoot(enemy, time);
-        }
-    }
 }
 
 // ─────────────────────────────────────────────
