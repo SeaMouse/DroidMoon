@@ -968,7 +968,7 @@ function restoreEnemiesFromState(state) {
         const nodeId = node ? node.id : null;
         const target = node ? { x: node.x, y: node.y } : null;
 
-        enemies.push({
+        const enemy = {
             sprite:         sprite,
             typeName:       saved.typeName,
             label:          typeDef.label,
@@ -985,7 +985,9 @@ function restoreEnemiesFromState(state) {
             lastStuckCheckPos:  { x: saved.x, y: saved.y },
             bounceCooldown: 0,
             knockbackUntil: 0,
-        });
+        };
+        sprite.setData('entity', enemy);
+        enemies.push(enemy);
     }
 }
 
@@ -1010,7 +1012,7 @@ function spawnFreshEnemies(enemyDefs) {
         const initNodeId = startNode ? startNode.id : null;
         const initTarget = startNode ? { x: startNode.x, y: startNode.y } : null;
 
-        enemies.push({
+        const enemy = {
             sprite:         sprite,
             typeName:       def.type,
             label:          typeDef.label,
@@ -1027,7 +1029,9 @@ function spawnFreshEnemies(enemyDefs) {
             lastStuckCheckPos:  { x: startX, y: startY },
             bounceCooldown: 0,
             knockbackUntil: 0,
-        });
+        };
+        sprite.setData('entity', enemy);
+        enemies.push(enemy);
     }
 }
 
@@ -1102,7 +1106,7 @@ function updateHUD() {
 //  PLAYER ↔ ENEMY COLLISION
 // ─────────────────────────────────────────────
 function onPlayerEnemyCollide(playerSprite, enemySprite) {
-    const enemy = enemies.find(e => e.sprite === enemySprite);
+    const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
 
     const wasInvincible = playerInvincible;
@@ -1142,8 +1146,8 @@ function onPlayerEnemyCollide(playerSprite, enemySprite) {
 //  ENEMY ↔ ENEMY COLLISION
 // ─────────────────────────────────────────────
 function onEnemyEnemyCollide(spriteA, spriteB) {
-    const enemyA = enemies.find(e => e.sprite === spriteA);
-    const enemyB = enemies.find(e => e.sprite === spriteB);
+    const enemyA = spriteA.getData('entity');
+    const enemyB = spriteB.getData('entity');
     if (!enemyA || !enemyB) { return; }
 
     const now = scene.time.now;
@@ -1252,7 +1256,7 @@ function bulletHitWall(bullet) {
 function bulletHitEnemy(bullet, enemySprite) {
     deactivateBullet(bullet);
 
-    const enemy = enemies.find(e => e.sprite === enemySprite);
+    const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
 
     enemy.hp--;
