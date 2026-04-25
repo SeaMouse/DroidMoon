@@ -154,8 +154,16 @@ const config = {
 
 const game = new Phaser.Game(config);
 
-let debugGraphics;
-let Keys;  // cached keyboard keys — populated in create()
+let keys;
+
+const Debug = {
+    nav:        null,   // dynamic enemy-target lines (was debugGraphics)
+    navStatic:  null,   // static nav graph (was scene.debugStaticGfx)
+    walls:      null,   // wall segments + corners (was scene.debugWallGfx)
+    rays:       null,   // 360° raycast test (was scene.debugRayGfx)
+    vis:        null,   // visibility polygon (was scene.debugVisGfx)
+    nodeLabels: [],     // (was scene.debugNodeLabels)
+};
 
 let player;
 let wallLayer;
@@ -291,16 +299,17 @@ const Lifts = {
     inputGated:   false,  // (moved from below — see step A2)
 };
 
-// --- Deck selection screen ---
-let deckSelectionActive = false;
-let deckSelectionItems  = [];  // [{text, deckName}]
-let deckSelectionIndex  = 0;
-let deckSelectBg;
-let deckSelectTitle;
-let deckSelectHint;
-let dpadPrevY           = 0;  // for gamepad d-pad edge detection
-let confirmButtonPrev   = false;
-let cancelButtonPrev    = false;
+const DeckMenu = {
+    active:      false,
+    items:       [],     // [{text, deckName}]
+    index:       0,
+    bg:          null,
+    title:       null,
+    hint:        null,
+    dpadPrevY:   0,      // gamepad d-pad edge detection
+    confirmPrev: false,
+    cancelPrev:  false,
+};
 
 // ─────────────────────────────────────────────
 //  WEAPON TYPE CATALOGUE
@@ -395,12 +404,12 @@ function create() {
     Lifts.playerOn   = null;
     Lifts.holdStart  = 0;
     Lifts.inputGated = false;
-    deckSelectionActive = false;
-    deckSelectionItems  = [];
-    deckSelectionIndex  = 0;
-    dpadPrevY        = 0;
-    confirmButtonPrev = false;
-    cancelButtonPrev  = false;
+    DeckMenu.active      = false;
+    DeckMenu.items       = [];
+    DeckMenu.index       = 0;
+    DeckMenu.dpadPrevY   = 0;
+    DeckMenu.confirmPrev = false;
+    DeckMenu.cancelPrev  = false;
 
     const deckDef = deckDefinitions[currentDeck];
     if (!deckDef) {
@@ -544,16 +553,16 @@ function create() {
     });
 
     // --- Debug nav overlay ---
-    debugGraphics = this.add.graphics();
-    debugGraphics.setDepth(50);
+    Debug.nav = this.add.graphics();
+    Debug.nav.setDepth(50);
     drawDebugNavStatic();
     drawDebugWallSegments();
-    scene.debugRayGfx = scene.add.graphics();
-    scene.debugRayGfx.setDepth(48);
-    scene.debugRayGfx.setVisible(false);
-    scene.debugVisGfx = scene.add.graphics();
-    scene.debugVisGfx.setDepth(47);
-    scene.debugVisGfx.setVisible(false);
+    Debug.rays = scene.add.graphics();
+    Debug.rays.setDepth(48);
+    Debug.rays.setVisible(false);
+    Debug.vis = scene.add.graphics();
+    Debug.vis.setDepth(47);
+    Debug.vis.setVisible(false);
     // --- Re-apply shutdown dim if this deck was already cleared ---
     if (deckStates[currentDeck] && deckStates[currentDeck].cleared) {
         applyDeckDim();
@@ -567,7 +576,7 @@ function update(time) {
     if (gameOver) { return; }
 
     // --- Deck selection screen has its own input loop ---
-    if (deckSelectionActive) {
+    if (DeckMenu.active) {
         updateDeckSelection(time);
         return;
     }
@@ -627,25 +636,24 @@ function update(time) {
 
     // --- Debug toggle ---
     if (Phaser.Input.Keyboard.JustDown(keys.f1)) {
-        const visible = !debugGraphics.visible;
-        debugGraphics.setVisible(visible);
-        scene.debugStaticGfx.setVisible(visible);
-        scene.debugNodeLabels.forEach(label => label.setVisible(visible));
+        const visible = !Debug.nav.visible;
+        Debug.nav.setVisible(visible);
+        Debug.navStatic.setVisible(visible);
+        Debug.nodeLabels.forEach(label => label.setVisible(visible));
     }
     if (Phaser.Input.Keyboard.JustDown(keys.f2)) {
-        const v = !scene.debugWallGfx.visible;
-        scene.debugWallGfx.setVisible(v);
+        Debug.walls.setVisible(!Debug.walls.visible);
     }
     if (Phaser.Input.Keyboard.JustDown(keys.f3)) {
-        scene.debugRayGfx.setVisible(!scene.debugRayGfx.visible);
+        Debug.rays.setVisible(!Debug.rays.visible);
     }
     if (Phaser.Input.Keyboard.JustDown(keys.f4)) {
-        scene.debugVisGfx.setVisible(!scene.debugVisGfx.visible);
+        Debug.vis.setVisible(!Debug.vis.visible);
     }
-    if (scene.debugVisGfx.visible) {
+    if (Debug.vis.visible) {
         drawDebugVisibilityPolygon();
     }
-    if (scene.debugRayGfx.visible) {
+    if (Debug.rays.visible) {
         drawDebugRays();
     }
     updateFogOfWar();
@@ -799,44 +807,41 @@ function updateLiftHold(time, pad) {
 //  DECK SELECTION SCREEN
 // ─────────────────────────────────────────────
 function showDeckSelection(liftData) {
-    deckSelectionActive = true;
-    deckSelectionIndex  = 0;
-    deckSelectionItems  = [];
+    DeckMenu.active = true;
+    DeckMenu.index  = 0;
+    DeckMenu.items  = [];
 
-    // Pause physics so nothing moves while the menu is open
     scene.physics.pause();
     player.setVelocity(0);
 
-    // Semi-transparent backdrop
-    deckSelectBg = scene.add.graphics();
-    deckSelectBg.fillStyle(0x000000, 0.75);
-    deckSelectBg.fillRect(0, 0, 800, 600);
-    deckSelectBg.setScrollFactor(0).setDepth(100);
+    DeckMenu.bg = scene.add.graphics();
+    DeckMenu.bg.fillStyle(0x000000, 0.75);
+    DeckMenu.bg.fillRect(0, 0, 800, 600);
+    DeckMenu.bg.setScrollFactor(0).setDepth(100);
 
-    deckSelectTitle = scene.add.text(400, 140, 'SELECT DECK', {
+    DeckMenu.title = scene.add.text(400, 140, 'SELECT DECK', {
         fontFamily: 'monospace', fontSize: '32px',
         fill: '#44aaff', stroke: '#000000', strokeThickness: 3
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
 
-    deckSelectHint = scene.add.text(400, 480, 'Arrow keys / D-pad to choose — Enter / A to confirm — Esc / B to cancel', {
+    DeckMenu.hint = scene.add.text(400, 480, 'Arrow keys / D-pad to choose — Enter / A to confirm — Esc / B to cancel', {
         fontFamily: 'monospace', fontSize: '11px', fill: '#666688'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
 
-    // Build list: current deck first (labelled "Stay"), then connected decks
     const connectedDecks = liftData.decks;
     const allOptions     = [currentDeck, ...connectedDecks.filter(d => d !== currentDeck)];
 
     let yPos = 220;
     for (const deckName of allOptions) {
-        const def   = deckDefinitions[deckName];
-        const label = def ? def.label : deckName;
+        const def    = deckDefinitions[deckName];
+        const label  = def ? def.label : deckName;
         const suffix = (deckName === currentDeck) ? '  (current deck)' : '';
 
         const txt = scene.add.text(400, yPos, label + suffix, {
             fontFamily: 'monospace', fontSize: '20px', fill: '#aaaacc'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
 
-        deckSelectionItems.push({ text: txt, deckName: deckName });
+        DeckMenu.items.push({ text: txt, deckName: deckName });
         yPos += 44;
     }
 
@@ -844,8 +849,8 @@ function showDeckSelection(liftData) {
 }
 
 function highlightDeckOption(index) {
-    for (let i = 0; i < deckSelectionItems.length; i++) {
-        const item = deckSelectionItems[i];
+    for (let i = 0; i < DeckMenu.items.length; i++) {
+        const item = DeckMenu.items[i];
         if (i === index) {
             item.text.setStyle({ fill: '#ffffff', fontSize: '22px' });
             item.text.setText('▸ ' + (deckDefinitions[item.deckName]?.label || item.deckName) +
@@ -862,14 +867,13 @@ function updateDeckSelection(time) {
     const pad = scene.input.gamepad.getPad(0);
 
     // --- Navigation (keyboard) ---
-    // --- Navigation (keyboard) ---
     if (Phaser.Input.Keyboard.JustDown(keys.up)) {
-        deckSelectionIndex = (deckSelectionIndex - 1 + deckSelectionItems.length) % deckSelectionItems.length;
-        highlightDeckOption(deckSelectionIndex);
+        DeckMenu.index = (DeckMenu.index - 1 + DeckMenu.items.length) % DeckMenu.items.length;
+        highlightDeckOption(DeckMenu.index);
     }
     if (Phaser.Input.Keyboard.JustDown(keys.down)) {
-        deckSelectionIndex = (deckSelectionIndex + 1) % deckSelectionItems.length;
-        highlightDeckOption(deckSelectionIndex);
+        DeckMenu.index = (DeckMenu.index + 1) % DeckMenu.items.length;
+        highlightDeckOption(DeckMenu.index);
     }
     if (Phaser.Input.Keyboard.JustDown(keys.enter)) {
         confirmDeckSelection();
@@ -882,55 +886,37 @@ function updateDeckSelection(time) {
 
     // --- Navigation (gamepad) ---
     if (pad) {
-        // D-pad or left stick for navigation (edge-triggered)
         const dpadY = pad.leftStick.y;
         const DPAD_THRESH = 0.5;
 
-        if (dpadY < -DPAD_THRESH && dpadPrevY >= -DPAD_THRESH) {
-            deckSelectionIndex = (deckSelectionIndex - 1 + deckSelectionItems.length) % deckSelectionItems.length;
-            highlightDeckOption(deckSelectionIndex);
+        if (dpadY < -DPAD_THRESH && DeckMenu.dpadPrevY >= -DPAD_THRESH) {
+            DeckMenu.index = (DeckMenu.index - 1 + DeckMenu.items.length) % DeckMenu.items.length;
+            highlightDeckOption(DeckMenu.index);
         }
-        if (dpadY > DPAD_THRESH && dpadPrevY <= DPAD_THRESH) {
-            deckSelectionIndex = (deckSelectionIndex + 1) % deckSelectionItems.length;
-            highlightDeckOption(deckSelectionIndex);
+        if (dpadY > DPAD_THRESH && DeckMenu.dpadPrevY <= DPAD_THRESH) {
+            DeckMenu.index = (DeckMenu.index + 1) % DeckMenu.items.length;
+            highlightDeckOption(DeckMenu.index);
         }
-        dpadPrevY = dpadY;
+        DeckMenu.dpadPrevY = dpadY;
 
-        // A button (index 0) to confirm
         const aDown = pad.buttons[0] && pad.buttons[0].pressed;
-        if (aDown && !confirmButtonPrev) { confirmDeckSelection(); return; }
-        confirmButtonPrev = aDown;
+        if (aDown && !DeckMenu.confirmPrev) { confirmDeckSelection(); return; }
+        DeckMenu.confirmPrev = aDown;
 
-        // B button (index 1) to cancel
         const bDown = pad.buttons[1] && pad.buttons[1].pressed;
-        if (bDown && !cancelButtonPrev) { cancelDeckSelection(); return; }
-        cancelButtonPrev = bDown;
+        if (bDown && !DeckMenu.cancelPrev) { cancelDeckSelection(); return; }
+        DeckMenu.cancelPrev = bDown;
     }
-}
-
-function confirmDeckSelection() {
-    const selected = deckSelectionItems[deckSelectionIndex];
-    if (!selected) { cancelDeckSelection(); return; }
-
-    if (selected.deckName === currentDeck) {
-        // Staying on the same deck — just close the menu
-        cancelDeckSelection();
-        return;
-    }
-
-    switchToDeck(selected.deckName);
 }
 
 function cancelDeckSelection() {
-    // Tear down the menu UI
-    deckSelectBg.destroy();
-    deckSelectTitle.destroy();
-    deckSelectHint.destroy();
-    for (const item of deckSelectionItems) { item.text.destroy(); }
-    deckSelectionItems  = [];
-    deckSelectionActive = false;
+    DeckMenu.bg.destroy();
+    DeckMenu.title.destroy();
+    DeckMenu.hint.destroy();
+    for (const item of DeckMenu.items) { item.text.destroy(); }
+    DeckMenu.items  = [];
+    DeckMenu.active = false;
 
-    // Resume physics
     scene.physics.resume();
 }
 
@@ -1995,13 +1981,13 @@ function drawDebugWallSegments() {
     }
 
     gfx.setVisible(false);
-    scene.debugWallGfx = gfx;
+    Debug.walls = gfx;
 }
 // ─────────────────────────────────────────────
 //  DEBUG — Draw 360 light raycasting test
 // ─────────────────────────────────────────────
 function drawDebugRays() {
-    const gfx = scene.debugRayGfx;
+    const gfx = Debug.rays;
     gfx.clear();
 
     const RAYS = 64;
@@ -2019,7 +2005,7 @@ function drawDebugRays() {
 //  DEBUG — Draw light cone test
 // ─────────────────────────────────────────────
 function drawDebugVisibilityPolygon() {
-    const gfx = scene.debugVisGfx;
+    const gfx = Debug.vis;
     gfx.clear();
 
     const poly = computeVisibilityPolygon(player.x, player.y);
@@ -2047,7 +2033,7 @@ function drawDebugNavStatic() {
     const staticGfx = scene.add.graphics();
     staticGfx.setDepth(50);
 
-    scene.debugNodeLabels = [];
+    Debug.nodeLabels = [];
 
     staticGfx.lineStyle(2, 0x00ff88, 0.85);
     for (const node of navNodes) {
@@ -2067,24 +2053,24 @@ function drawDebugNavStatic() {
             fontSize:   '9px',
             fill:       '#00ccff'
         }).setDepth(51).setVisible(false);
-        scene.debugNodeLabels.push(label);
+        Debug.nodeLabels.push(label);
     }
     staticGfx.setVisible(false);
-    debugGraphics.setVisible(false);
-    scene.debugStaticGfx = staticGfx;
+    Debug.nav.setVisible(false);
+    Debug.navStatic = staticGfx;
 }
 
 function drawDebugNavDynamic() {
-    if (!debugGraphics.visible) { return; }
-    debugGraphics.clear();
+    if (!Debug.nav.visible) { return; }
+    Debug.nav.clear();
     for (const enemy of enemies) {
         if (!enemy.nodeTarget) { continue; }
-        debugGraphics.lineStyle(4, 0xffee00, 0.9);
-        debugGraphics.beginPath();
-        debugGraphics.moveTo(enemy.sprite.x, enemy.sprite.y);
-        debugGraphics.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
-        debugGraphics.strokePath();
-        debugGraphics.fillStyle(0xffee00, 1);
-        debugGraphics.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
+        Debug.nav.lineStyle(4, 0xffee00, 0.9);
+        Debug.nav.beginPath();
+        Debug.nav.moveTo(enemy.sprite.x, enemy.sprite.y);
+        Debug.nav.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
+        Debug.nav.strokePath();
+        Debug.nav.fillStyle(0xffee00, 1);
+        Debug.nav.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
     }
 }
