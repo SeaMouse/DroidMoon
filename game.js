@@ -155,7 +155,7 @@ const config = {
 const game = new Phaser.Game(config);
 
 let debugGraphics;
-let f1Key;
+let Keys;  // cached keyboard keys — populated in create()
 
 let player;
 let wallLayer;
@@ -170,10 +170,6 @@ const FOG_COLOUR   = 0x000011;
 const LIGHT_MAX_RANGE = 550;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
 const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
-
-let f2Key;
-let f3Key;
-let f4Key;
 
 let bullets;          // player bullets
 let enemyBullets;     // enemy bullets — separate group so overlaps are unambiguous
@@ -541,11 +537,20 @@ function create() {
     fogRT.setDepth(40);          // above gameplay, below HUD (HUD is depth 10-20)
     fogRT.setOrigin(0, 0);       // top-left, so world coords map directly
 
+    // --- Cached keyboard keys (one place, populated once per scene) ---
+    keys = this.input.keyboard.addKeys({
+        f:     'F',
+        up:    'UP',
+        down:  'DOWN',
+        enter: 'ENTER',
+        esc:   'ESC',
+        f1:    'F1',
+        f2:    'F2',
+        f3:    'F3',
+        f4:    'F4',
+    });
+
     // --- Debug nav overlay ---
-    f1Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F1);
-    f2Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F2);
-    f3Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F3);
-    f4Key = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F4);
     debugGraphics = this.add.graphics();
     debugGraphics.setDepth(50);
     drawDebugNavStatic();
@@ -628,20 +633,20 @@ function update(time) {
     }
 
     // --- Debug toggle ---
-    if (Phaser.Input.Keyboard.JustDown(f1Key)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.f1)) {
         const visible = !debugGraphics.visible;
         debugGraphics.setVisible(visible);
         scene.debugStaticGfx.setVisible(visible);
         scene.debugNodeLabels.forEach(label => label.setVisible(visible));
     }
-    if (Phaser.Input.Keyboard.JustDown(f2Key)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.f2)) {
         const v = !scene.debugWallGfx.visible;
         scene.debugWallGfx.setVisible(v);
     }
-    if (Phaser.Input.Keyboard.JustDown(f3Key)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.f3)) {
         scene.debugRayGfx.setVisible(!scene.debugRayGfx.visible);
     }
-    if (Phaser.Input.Keyboard.JustDown(f4Key)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.f4)) {
         scene.debugVisGfx.setVisible(!scene.debugVisGfx.visible);
     }
     if (scene.debugVisGfx.visible) {
@@ -749,8 +754,7 @@ function updateLiftHold(time, pad) {
         holdInput = (Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE);
     }
 
-    const fKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-    if (fKey.isDown) { holdInput = true; }
+    if (keys.f.isDown) { holdInput = true; }
     // If we just arrived via lift, wait for the player to release the stick
     // before we start counting a new hold. Otherwise a continuous hold across
     // the scene restart would pop the menu open again.
@@ -871,24 +875,20 @@ function updateDeckSelection(time) {
     const pad = scene.input.gamepad.getPad(0);
 
     // --- Navigation (keyboard) ---
-    const upKey    = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
-    const downKey  = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
-    const enterKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
-    const escKey   = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-
-    if (Phaser.Input.Keyboard.JustDown(upKey)) {
+    // --- Navigation (keyboard) ---
+    if (Phaser.Input.Keyboard.JustDown(keys.up)) {
         deckSelectionIndex = (deckSelectionIndex - 1 + deckSelectionItems.length) % deckSelectionItems.length;
         highlightDeckOption(deckSelectionIndex);
     }
-    if (Phaser.Input.Keyboard.JustDown(downKey)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.down)) {
         deckSelectionIndex = (deckSelectionIndex + 1) % deckSelectionItems.length;
         highlightDeckOption(deckSelectionIndex);
     }
-    if (Phaser.Input.Keyboard.JustDown(enterKey)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.enter)) {
         confirmDeckSelection();
         return;
     }
-    if (Phaser.Input.Keyboard.JustDown(escKey)) {
+    if (Phaser.Input.Keyboard.JustDown(keys.esc)) {
         cancelDeckSelection();
         return;
     }
