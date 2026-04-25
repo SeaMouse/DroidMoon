@@ -62,6 +62,150 @@ const titleScene = {
 };
 
 // ─────────────────────────────────────────────
+//  SCENE: DECK SELECT  (overlay menu)
+// ─────────────────────────────────────────────
+const deckSelectScene = {
+    key: 'DeckSelectScene',
+
+    init: function(data) {
+        this.lift = data.lift;
+        this.index = 0;
+        this.items = [];
+        this.dpadPrevY   = 0;
+        this.confirmPrev = false;
+        this.cancelPrev  = false;
+        this.ready       = false;   // input lockout flag
+    },
+
+    create: function() {
+        // Backdrop
+        this.add.graphics()
+        .fillStyle(0x000000, 0.75)
+        .fillRect(0, 0, 800, 600)
+        .setScrollFactor(0);
+
+        this.add.text(400, 140, 'SELECT DECK', {
+            fontFamily: 'monospace', fontSize: '32px',
+            fill: '#44aaff', stroke: '#000000', strokeThickness: 3
+        }).setOrigin(0.5).setScrollFactor(0);
+
+        this.add.text(400, 480,
+                      'Arrow keys / D-pad to choose — Enter / A to confirm — Esc / B to cancel', {
+                          fontFamily: 'monospace', fontSize: '11px', fill: '#666688'
+                      }).setOrigin(0.5).setScrollFactor(0);
+
+                      // Build the option list: current deck first, then connected decks
+                      const connectedDecks = this.lift.decks;
+                      const allOptions     = [currentDeck, ...connectedDecks.filter(d => d !== currentDeck)];
+
+                      let yPos = 220;
+                      for (const deckName of allOptions) {
+                          const def    = deckDefinitions[deckName];
+                          const label  = def ? def.label : deckName;
+                          const suffix = (deckName === currentDeck) ? '  (current deck)' : '';
+
+                          const txt = this.add.text(400, yPos, label + suffix, {
+                              fontFamily: 'monospace', fontSize: '20px', fill: '#aaaacc'
+                          }).setOrigin(0.5).setScrollFactor(0);
+
+                          this.items.push({ text: txt, deckName: deckName });
+                          yPos += 44;
+                      }
+
+                      // Cache keys for this scene
+                      this.menuKeys = this.input.keyboard.addKeys({
+                          up: 'UP', down: 'DOWN', enter: 'ENTER', esc: 'ESC',
+                      });
+
+                      this.highlight(0);
+
+                      // Brief input lockout — the same button that opened the menu
+                      // is probably still held down on this very tick.
+                      this.time.delayedCall(150, () => { this.ready = true; });
+    },
+
+    highlight: function(index) {
+        for (let i = 0; i < this.items.length; i++) {
+            const item = this.items[i];
+            const label = deckDefinitions[item.deckName]?.label || item.deckName;
+            const suffix = (item.deckName === currentDeck) ? '  (current deck)' : '';
+            if (i === index) {
+                item.text.setStyle({ fill: '#ffffff', fontSize: '22px' });
+                item.text.setText('▸ ' + label + suffix);
+            } else {
+                item.text.setStyle({ fill: '#aaaacc', fontSize: '20px' });
+                item.text.setText('  ' + label + suffix);
+            }
+        }
+    },
+
+    update: function() {
+        if (!this.ready) { return; }
+
+        const pad = this.input.gamepad.getPad(0);
+
+        // --- Keyboard ---
+        if (Phaser.Input.Keyboard.JustDown(this.menuKeys.up)) {
+            this.index = (this.index - 1 + this.items.length) % this.items.length;
+            this.highlight(this.index);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.menuKeys.down)) {
+            this.index = (this.index + 1) % this.items.length;
+            this.highlight(this.index);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.menuKeys.enter)) {
+            this.confirm();
+            return;
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.menuKeys.esc)) {
+            this.cancel();
+            return;
+        }
+
+        // --- Gamepad ---
+        if (pad) {
+            const dpadY = pad.leftStick.y;
+            const T = 0.5;
+
+            if (dpadY < -T && this.dpadPrevY >= -T) {
+                this.index = (this.index - 1 + this.items.length) % this.items.length;
+                this.highlight(this.index);
+            }
+            if (dpadY > T && this.dpadPrevY <= T) {
+                this.index = (this.index + 1) % this.items.length;
+                this.highlight(this.index);
+            }
+            this.dpadPrevY = dpadY;
+
+            const aDown = pad.buttons[0] && pad.buttons[0].pressed;
+            if (aDown && !this.confirmPrev) { this.confirm(); return; }
+            this.confirmPrev = aDown;
+
+            const bDown = pad.buttons[1] && pad.buttons[1].pressed;
+            if (bDown && !this.cancelPrev) { this.cancel(); return; }
+            this.cancelPrev = bDown;
+        }
+    },
+
+    confirm: function() {
+        const selected = this.items[this.index];
+        if (!selected || selected.deckName === currentDeck) {
+            this.cancel();
+            return;
+        }
+        // Tell the game scene to switch decks, then close.
+        this.scene.stop();
+        this.scene.resume('GameScene');
+        switchToDeck(selected.deckName);
+    },
+
+    cancel: function() {
+        this.scene.stop();
+        this.scene.resume('GameScene');
+    },
+};
+
+// ─────────────────────────────────────────────
 //  SCENE: GAMEPLAY  (wraps your existing preload/create/update)
 // ─────────────────────────────────────────────
 const gameScene = {
@@ -149,7 +293,7 @@ const config = {
     input: {
         gamepad: true
     },
-    scene: [titleScene, gameScene, endScene]
+    scene: [titleScene, gameScene, endScene, deckSelectScene]
 };
 
 const game = new Phaser.Game(config);
@@ -297,18 +441,6 @@ const Lifts = {
     progressBg:   null,   // visual feedback — background bar
     progressFill: null,   // visual feedback — fill bar
     inputGated:   false,  // (moved from below — see step A2)
-};
-
-const DeckMenu = {
-    active:      false,
-    items:       [],     // [{text, deckName}]
-    index:       0,
-    bg:          null,
-    title:       null,
-    hint:        null,
-    dpadPrevY:   0,      // gamepad d-pad edge detection
-    confirmPrev: false,
-    cancelPrev:  false,
 };
 
 // ─────────────────────────────────────────────
@@ -560,12 +692,6 @@ function create() {
     Lifts.playerOn   = null;
     Lifts.holdStart  = 0;
     Lifts.inputGated = false;
-    DeckMenu.active      = false;
-    DeckMenu.items       = [];
-    DeckMenu.index       = 0;
-    DeckMenu.dpadPrevY   = 0;
-    DeckMenu.confirmPrev = false;
-    DeckMenu.cancelPrev  = false;
 
     const deckDef = deckDefinitions[currentDeck];
     if (!deckDef) {
@@ -730,12 +856,6 @@ function create() {
 // ─────────────────────────────────────────────
 function update(time) {
     if (gameOver) { return; }
-
-    // --- Deck selection screen has its own input loop ---
-    if (DeckMenu.active) {
-        updateDeckSelection(time);
-        return;
-    }
 
     player.setVelocity(0);
 
@@ -963,118 +1083,10 @@ function updateLiftHold(time, pad) {
 //  DECK SELECTION SCREEN
 // ─────────────────────────────────────────────
 function showDeckSelection(liftData) {
-    DeckMenu.active = true;
-    DeckMenu.index  = 0;
-    DeckMenu.items  = [];
-
-    scene.physics.pause();
-    player.setVelocity(0);
-
-    DeckMenu.bg = scene.add.graphics();
-    DeckMenu.bg.fillStyle(0x000000, 0.75);
-    DeckMenu.bg.fillRect(0, 0, 800, 600);
-    DeckMenu.bg.setScrollFactor(0).setDepth(100);
-
-    DeckMenu.title = scene.add.text(400, 140, 'SELECT DECK', {
-        fontFamily: 'monospace', fontSize: '32px',
-        fill: '#44aaff', stroke: '#000000', strokeThickness: 3
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
-
-    DeckMenu.hint = scene.add.text(400, 480, 'Arrow keys / D-pad to choose — Enter / A to confirm — Esc / B to cancel', {
-        fontFamily: 'monospace', fontSize: '11px', fill: '#666688'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
-
-    const connectedDecks = liftData.decks;
-    const allOptions     = [currentDeck, ...connectedDecks.filter(d => d !== currentDeck)];
-
-    let yPos = 220;
-    for (const deckName of allOptions) {
-        const def    = deckDefinitions[deckName];
-        const label  = def ? def.label : deckName;
-        const suffix = (deckName === currentDeck) ? '  (current deck)' : '';
-
-        const txt = scene.add.text(400, yPos, label + suffix, {
-            fontFamily: 'monospace', fontSize: '20px', fill: '#aaaacc'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
-
-        DeckMenu.items.push({ text: txt, deckName: deckName });
-        yPos += 44;
-    }
-
-    highlightDeckOption(0);
+    scene.scene.pause();
+    scene.scene.launch('DeckSelectScene', { lift: liftData });
 }
 
-function highlightDeckOption(index) {
-    for (let i = 0; i < DeckMenu.items.length; i++) {
-        const item = DeckMenu.items[i];
-        if (i === index) {
-            item.text.setStyle({ fill: '#ffffff', fontSize: '22px' });
-            item.text.setText('▸ ' + (deckDefinitions[item.deckName]?.label || item.deckName) +
-            (item.deckName === currentDeck ? '  (current deck)' : ''));
-        } else {
-            item.text.setStyle({ fill: '#aaaacc', fontSize: '20px' });
-            item.text.setText('  ' + (deckDefinitions[item.deckName]?.label || item.deckName) +
-            (item.deckName === currentDeck ? '  (current deck)' : ''));
-        }
-    }
-}
-
-function updateDeckSelection(time) {
-    const pad = scene.input.gamepad.getPad(0);
-
-    // --- Navigation (keyboard) ---
-    if (Phaser.Input.Keyboard.JustDown(keys.up)) {
-        DeckMenu.index = (DeckMenu.index - 1 + DeckMenu.items.length) % DeckMenu.items.length;
-        highlightDeckOption(DeckMenu.index);
-    }
-    if (Phaser.Input.Keyboard.JustDown(keys.down)) {
-        DeckMenu.index = (DeckMenu.index + 1) % DeckMenu.items.length;
-        highlightDeckOption(DeckMenu.index);
-    }
-    if (Phaser.Input.Keyboard.JustDown(keys.enter)) {
-        confirmDeckSelection();
-        return;
-    }
-    if (Phaser.Input.Keyboard.JustDown(keys.esc)) {
-        cancelDeckSelection();
-        return;
-    }
-
-    // --- Navigation (gamepad) ---
-    if (pad) {
-        const dpadY = pad.leftStick.y;
-        const DPAD_THRESH = 0.5;
-
-        if (dpadY < -DPAD_THRESH && DeckMenu.dpadPrevY >= -DPAD_THRESH) {
-            DeckMenu.index = (DeckMenu.index - 1 + DeckMenu.items.length) % DeckMenu.items.length;
-            highlightDeckOption(DeckMenu.index);
-        }
-        if (dpadY > DPAD_THRESH && DeckMenu.dpadPrevY <= DPAD_THRESH) {
-            DeckMenu.index = (DeckMenu.index + 1) % DeckMenu.items.length;
-            highlightDeckOption(DeckMenu.index);
-        }
-        DeckMenu.dpadPrevY = dpadY;
-
-        const aDown = pad.buttons[0] && pad.buttons[0].pressed;
-        if (aDown && !DeckMenu.confirmPrev) { confirmDeckSelection(); return; }
-        DeckMenu.confirmPrev = aDown;
-
-        const bDown = pad.buttons[1] && pad.buttons[1].pressed;
-        if (bDown && !DeckMenu.cancelPrev) { cancelDeckSelection(); return; }
-        DeckMenu.cancelPrev = bDown;
-    }
-}
-
-function cancelDeckSelection() {
-    DeckMenu.bg.destroy();
-    DeckMenu.title.destroy();
-    DeckMenu.hint.destroy();
-    for (const item of DeckMenu.items) { item.text.destroy(); }
-    DeckMenu.items  = [];
-    DeckMenu.active = false;
-
-    scene.physics.resume();
-}
 
 // ─────────────────────────────────────────────
 //  DECK SWITCHING
