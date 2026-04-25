@@ -222,7 +222,6 @@ let currentDeck    = 'deck1';           // starting deck
 let deckStates     = {};                // persisted between deck switches
 let playerSpawnPos = null;              // set before switching; null = use default
 let lastDeck       = null;    // which deck we arrived FROM via lift (null = fresh start)
-let liftInputGated = false;   // require input release before a new hold can begin
 
 // ─────────────────────────────────────────────
 //  DECK DEFINITIONS
@@ -280,23 +279,17 @@ const deckDefinitions = {
 // ─────────────────────────────────────────────
 //  LIFT SYSTEM
 // ─────────────────────────────────────────────
-// In each Tiled map, create an object layer called "Lifts".
-// Place rectangle objects wherever a lift should appear.
-// Each lift object needs a custom string property called "decks"
-// containing a comma-separated list of deck names the lift
-// connects to, e.g.:   decks = "deck1,deck2,deck3"
-//
-// The player holds the right stick (or the F key) for 2 seconds
-// while overlapping a lift to open the deck selection screen.
-// ─────────────────────────────────────────────
+const LIFT_HOLD_MS = 2000;   // hold duration to activate
 
-let liftZones       = [];     // [{sprite, decks:[string]}]
-let liftZoneGroup;            // physics group for overlap detection
-let playerOnLift    = null;   // the lift data object if overlapping, else null
-let liftHoldStart   = 0;      // timestamp when hold began (0 = not holding)
-let liftProgressBg  = null;   // visual feedback — background bar
-let liftProgressFill = null;  // visual feedback — fill bar
-const LIFT_HOLD_MS  = 2000;   // hold duration to activate
+const Lifts = {
+    zones:        [],     // [{zone, x, y, decks:[string]}]
+    zoneGroup:    null,   // physics group for overlap detection
+    playerOn:     null,   // the lift data object if overlapping, else null
+    holdStart:    0,      // timestamp when hold began (0 = not holding)
+    progressBg:   null,   // visual feedback — background bar
+    progressFill: null,   // visual feedback — fill bar
+    inputGated:   false,  // (moved from below — see step A2)
+};
 
 // --- Deck selection screen ---
 let deckSelectionActive = false;
@@ -398,10 +391,10 @@ function create() {
     playerInvincible = false;
     lastShotTime     = 0;
     rightStickReset  = true;
-    liftZones        = [];
-    playerOnLift     = null;
-    liftHoldStart    = 0;
-    liftInputGated = false;
+    Lifts.zones      = [];
+    Lifts.playerOn   = null;
+    Lifts.holdStart  = 0;
+    Lifts.inputGated = false;
     deckSelectionActive = false;
     deckSelectionItems  = [];
     deckSelectionIndex  = 0;
@@ -498,14 +491,14 @@ function create() {
     this.physics.add.overlap(bullets, enemyGroup, bulletHitEnemy);
 
     // --- Lift zones ---
-    liftZoneGroup = this.physics.add.staticGroup();
+    Lifts.zoneGroup = this.physics.add.staticGroup();
     parseLiftZones(map);
     // --- Arrival: if we came from another deck via lift, snap to the matching lift ---
     if (lastDeck) {
-        const arrivalLift = liftZones.find(lift => lift.decks.includes(lastDeck));
+        const arrivalLift = Lifts.zones.find(lift => lift.decks.includes(lastDeck));
         if (arrivalLift) {
             player.setPosition(arrivalLift.x, arrivalLift.y);
-            liftInputGated = true;   // don't re-trigger the lift menu we just closed
+            Lifts.inputGated = true;   // don't re-trigger the lift menu we just closed
             console.log('LIFTS: Arrived on ' + currentDeck +
             ' at lift connecting to ' + lastDeck + '.');
         } else {
@@ -517,10 +510,10 @@ function create() {
     }
 
     // --- Lift progress bar (hidden until needed) ---
-    liftProgressBg = this.add.graphics();
-    liftProgressBg.setScrollFactor(0).setDepth(52).setVisible(false);
-    liftProgressFill = this.add.graphics();
-    liftProgressFill.setScrollFactor(0).setDepth(53).setVisible(false);
+    Lifts.progressBg = this.add.graphics();
+    Lifts.progressBg.setScrollFactor(0).setDepth(52).setVisible(false);
+    Lifts.progressFill = this.add.graphics();
+    Lifts.progressFill.setScrollFactor(0).setDepth(53).setVisible(false);
 
     // --- Camera ---
     const mapWidth  = map.widthInPixels;
@@ -701,7 +694,7 @@ function parseLiftZones(map) {
 
         const zone = scene.add.zone(cx, cy, w, h);
         scene.physics.add.existing(zone, true);  // true = static body
-        liftZoneGroup.add(zone);
+        Lifts.zoneGroup.add(zone);
 
         // Draw a subtle visual indicator so the player knows a lift is here
         const indicator = scene.add.graphics();
@@ -720,16 +713,16 @@ function parseLiftZones(map) {
             y:     cy,
             decks: connectedDecks,
         };
-        liftZones.push(liftData);
+        Lifts.zones.push(liftData);
     }
 
-    console.log('LIFTS: Parsed ' + liftZones.length + ' lift zone(s) on ' + currentDeck + '.');
+    console.log('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + currentDeck + '.');
 }
 
 // Checks player overlap against all lift zones directly (no callback timing issues)
 function findPlayerLiftOverlap() {
     const pb = player.getBounds();
-    for (const lift of liftZones) {
+    for (const lift of Lifts.zones) {
         const zb = lift.zone.getBounds();
         if (Phaser.Geom.Intersects.RectangleToRectangle(pb, zb)) {
             return lift;
@@ -742,9 +735,6 @@ function findPlayerLiftOverlap() {
 //  LIFT SYSTEM — hold-to-activate
 // ─────────────────────────────────────────────
 function updateLiftHold(time, pad) {
-    // Determine if the "activate" input is held.
-    // Gamepad: right stick held past dead zone in any direction
-    // Keyboard: F key held
     const DEAD_ZONE = 0.15;
     let holdInput = false;
 
@@ -755,57 +745,54 @@ function updateLiftHold(time, pad) {
     }
 
     if (keys.f.isDown) { holdInput = true; }
+
     // If we just arrived via lift, wait for the player to release the stick
-    // before we start counting a new hold. Otherwise a continuous hold across
-    // the scene restart would pop the menu open again.
-    if (liftInputGated) {
-        if (!holdInput) { liftInputGated = false; }
-        playerOnLift = null;
+    // before we start counting a new hold.
+    if (Lifts.inputGated) {
+        if (!holdInput) { Lifts.inputGated = false; }
+        Lifts.playerOn = null;
         return;
     }
 
-    playerOnLift = findPlayerLiftOverlap();
+    Lifts.playerOn = findPlayerLiftOverlap();
 
-    if (playerOnLift && holdInput) {
-        // Start or continue the hold timer
-        if (liftHoldStart === 0) {
-            liftHoldStart = time;
+    if (Lifts.playerOn && holdInput) {
+        if (Lifts.holdStart === 0) {
+            Lifts.holdStart = time;
         }
 
-        const elapsed  = time - liftHoldStart;
+        const elapsed  = time - Lifts.holdStart;
         const progress = Math.min(elapsed / LIFT_HOLD_MS, 1);
 
-        // Draw progress bar centred at bottom of screen
         const barW = 120;
         const barH = 10;
         const barX = (800 - barW) / 2;
         const barY = 560;
 
-        liftProgressBg.setVisible(true);
-        liftProgressBg.clear();
-        liftProgressBg.fillStyle(0x222244, 0.8);
-        liftProgressBg.fillRect(barX, barY, barW, barH);
+        Lifts.progressBg.setVisible(true);
+        Lifts.progressBg.clear();
+        Lifts.progressBg.fillStyle(0x222244, 0.8);
+        Lifts.progressBg.fillRect(barX, barY, barW, barH);
 
-        liftProgressFill.setVisible(true);
-        liftProgressFill.clear();
-        liftProgressFill.fillStyle(0x44aaff, 1);
-        liftProgressFill.fillRect(barX, barY, Math.round(barW * progress), barH);
+        Lifts.progressFill.setVisible(true);
+        Lifts.progressFill.clear();
+        Lifts.progressFill.fillStyle(0x44aaff, 1);
+        Lifts.progressFill.fillRect(barX, barY, Math.round(barW * progress), barH);
 
         if (progress >= 1) {
-            // Activated!
-            liftHoldStart = 0;
-            liftProgressBg.setVisible(false);
-            liftProgressFill.setVisible(false);
-            showDeckSelection(playerOnLift);
+            Lifts.holdStart = 0;
+            Lifts.progressBg.setVisible(false);
+            Lifts.progressFill.setVisible(false);
+            showDeckSelection(Lifts.playerOn);
         }
     } else {
-        // Not on lift or not holding — reset
-        if (liftHoldStart !== 0) {
-            liftHoldStart = 0;
-            liftProgressBg.setVisible(false);
-            liftProgressFill.setVisible(false);
+        if (Lifts.holdStart !== 0) {
+            Lifts.holdStart = 0;
+            Lifts.progressBg.setVisible(false);
+            Lifts.progressFill.setVisible(false);
         }
     }
+}
 }
 
 // ─────────────────────────────────────────────
@@ -1621,8 +1608,8 @@ function resetGameState() {
     deckStates     = {};
     currentDeck    = 'deck1';
     playerSpawnPos = null;
-    lastDeck       = null;          // ← new
-    liftInputGated = false;         // ← new
+    lastDeck       = null;
+    Lifts.inputGated = false;
     playerEnergy   = PLAYER_MAX_ENERGY;
     killCount      = 0;
 }
