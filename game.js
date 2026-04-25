@@ -323,8 +323,8 @@ const LIGHT_MAX_RANGE = 550;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
 const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
-let bullets;          // player bullets
-let enemyBullets;     // enemy bullets — separate group so overlaps are unambiguous
+let playerBullets;    // BulletPool instance
+let enemyBullets;     // BulletPool instance
 let enemyGroup;
 let rightStickReset = true;
 let scene;
@@ -460,6 +460,48 @@ const weaponTypes = {
         colour:      0xff00ff,
     },
 };
+
+// ─────────────────────────────────────────────
+//  BULLET POOL
+// ─────────────────────────────────────────────
+class BulletPool {
+    constructor(scene, opts) {
+        this.scene       = scene;
+        this.textureKey  = opts.textureKey;
+        this.defaultSpeed  = opts.defaultSpeed;
+        this.defaultDamage = opts.defaultDamage;
+
+        this.group = scene.physics.add.group({
+            defaultKey: this.textureKey,
+                maxSize:    opts.maxSize ?? 30,
+        });
+    }
+
+    fire(x, y, dx, dy, opts = {}) {
+        const bullet = this.group.get(x, y, opts.textureKey ?? this.textureKey);
+        if (!bullet) { return null; }
+
+        bullet.setActive(true);
+        bullet.setVisible(true);
+        bullet.body.enable = true;
+        bullet.body.reset(x, y);
+        bullet.setData('damage', opts.damage ?? this.defaultDamage);
+
+        const speed = opts.speed ?? this.defaultSpeed;
+        const angle = Math.atan2(dy, dx);
+        bullet.setVelocityX(Math.cos(angle) * speed);
+        bullet.setVelocityY(Math.sin(angle) * speed);
+
+        return bullet;
+    }
+
+    deactivate(bullet) {
+        bullet.setActive(false);
+        bullet.setVisible(false);
+        bullet.setVelocity(0);
+        bullet.body.enable = false;
+    }
+}
 
 // ─────────────────────────────────────────────
 //  ENEMY TYPE CATALOGUE
@@ -735,12 +777,16 @@ function create() {
         bulletGfx.destroy();
     }
 
-    // --- Player bullet group ---
-    bullets = this.physics.add.group({
-        defaultKey: 'bullet',
-            maxSize:    20,
+    // --- Player bullet pool ---
+    playerBullets = new BulletPool(this, {
+        textureKey:    'bullet',
+        defaultSpeed:  BULLET_SPEED,
+            defaultDamage: 1,           // player bullets do 1 hp damage to enemies
+                maxSize:       20,
     });
-    this.physics.add.collider(bullets, wallLayer, bulletHitWall);
+    this.physics.add.collider(playerBullets.group, wallLayer, (bullet) => {
+        playerBullets.deactivate(bullet);
+    });
 
     // --- Enemy bullet textures ---
     for (const [weaponKey, weaponDef] of Object.entries(weaponTypes)) {
@@ -754,10 +800,19 @@ function create() {
         }
     }
 
-    // --- Enemy bullet group ---
-    enemyBullets = this.physics.add.group({ maxSize: 60 });
-    this.physics.add.collider(enemyBullets, wallLayer, enemyBulletHitWall);
-    this.physics.add.overlap(player, enemyBullets, playerHitByEnemyBullet);
+    // --- Enemy bullet pool ---
+    // We pick blaster as the pool's default texture; per-shot overrides
+    // supply heavy_blaster textures when needed.
+    enemyBullets = new BulletPool(this, {
+        textureKey:    'ebullet_blaster',
+        defaultSpeed:  weaponTypes.blaster.bulletSpeed,
+            defaultDamage: weaponTypes.blaster.damage,
+                maxSize:       60,
+    });
+    this.physics.add.collider(enemyBullets.group, wallLayer, (bullet) => {
+        enemyBullets.deactivate(bullet);
+    });
+    this.physics.add.overlap(player, enemyBullets.group, playerHitByEnemyBullet);
 
     // --- Enemy sprite textures ---
     for (const [typeKey, typeDef] of Object.entries(enemyTypes)) {
@@ -779,7 +834,7 @@ function create() {
     // --- Player-enemy collisions ---
     this.physics.add.collider(player, enemyGroup, onPlayerEnemyCollide);
     this.physics.add.collider(enemyGroup, enemyGroup, onEnemyEnemyCollide);
-    this.physics.add.overlap(bullets, enemyGroup, bulletHitEnemy);
+    this.physics.add.overlap(playerBullets.group, enemyGroup, bulletHitEnemy);
 
     // --- Lift zones ---
     Lifts.zoneGroup = this.physics.add.staticGroup();
@@ -1288,7 +1343,7 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
 // ─────────────────────────────────────────────
 function playerHitByEnemyBullet(playerSprite, bullet) {
     const damage = bullet.getData('damage') ?? 20;
-    deactivateEnemyBullet(bullet);
+    enemyBullets.deactivate(bullet);
     applyDamageToPlayer(damage);
 }
 
@@ -1341,25 +1396,12 @@ function triggerGameOver() {
 //  PLAYER BULLETS
 // ─────────────────────────────────────────────
 function fireBullet(x, y, dx, dy) {
-    const bullet = bullets.get(x, y, 'bullet');
-    if (!bullet) { return; }
-
-    bullet.setActive(true);
-    bullet.setVisible(true);
-    bullet.body.enable = true;
-    bullet.body.reset(x, y);
-
-    const angle = Math.atan2(dy, dx);
-    bullet.setVelocityX(Math.cos(angle) * BULLET_SPEED);
-    bullet.setVelocityY(Math.sin(angle) * BULLET_SPEED);
-}
-
-function bulletHitWall(bullet) {
-    deactivateBullet(bullet);
+    playerBullets.fire(x, y, dx, dy);
 }
 
 function bulletHitEnemy(bullet, enemySprite) {
-    deactivateBullet(bullet);
+    const damage = bullet.getData('damage') ?? 1;
+    playerBullets.deactivate(bullet);
 
     const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
@@ -1390,13 +1432,6 @@ function bulletHitEnemy(bullet, enemySprite) {
     }
 }
 
-function deactivateBullet(bullet) {
-    bullet.setActive(false);
-    bullet.setVisible(false);
-    bullet.setVelocity(0);
-    bullet.body.enable = false;
-}
-
 // ─────────────────────────────────────────────
 //  ENEMY BULLETS
 // ─────────────────────────────────────────────
@@ -1407,32 +1442,14 @@ function enemyShoot(enemy, time) {
     if (time < enemy.lastShotTime + weaponDef.cooldown) { return; }
     enemy.lastShotTime = time;
 
-    const textureKey = 'ebullet_' + enemy.weaponType;
-    const bullet     = enemyBullets.get(enemy.sprite.x, enemy.sprite.y, textureKey);
-    if (!bullet) { return; }
+    const dx = player.x - enemy.sprite.x;
+    const dy = player.y - enemy.sprite.y;
 
-    bullet.setActive(true);
-    bullet.setVisible(true);
-    bullet.body.enable = true;
-    bullet.body.reset(enemy.sprite.x, enemy.sprite.y);
-    bullet.setData('damage', weaponDef.damage);
-
-    const angle = Phaser.Math.Angle.Between(
-        enemy.sprite.x, enemy.sprite.y, player.x, player.y
-    );
-    bullet.setVelocityX(Math.cos(angle) * weaponDef.bulletSpeed);
-    bullet.setVelocityY(Math.sin(angle) * weaponDef.bulletSpeed);
-}
-
-function enemyBulletHitWall(bullet) {
-    deactivateEnemyBullet(bullet);
-}
-
-function deactivateEnemyBullet(bullet) {
-    bullet.setActive(false);
-    bullet.setVisible(false);
-    bullet.setVelocity(0);
-    bullet.body.enable = false;
+    enemyBullets.fire(enemy.sprite.x, enemy.sprite.y, dx, dy, {
+        textureKey: 'ebullet_' + enemy.weaponType,
+        speed:      weaponDef.bulletSpeed,
+        damage:     weaponDef.damage,
+    });
 }
 
 // ─────────────────────────────────────────────
