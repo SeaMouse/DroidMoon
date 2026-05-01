@@ -1954,16 +1954,6 @@ function updateFogOfWar() {
     }
     fogRT.setVisible(true);
 
-    console.log('FOG:', {
-        cleared:    isDeckCleared(),
-                fogVisible: fogRT.visible,
-                fogAlpha:   fogRT.alpha,
-                playerXY:   [Math.round(player.x), Math.round(player.y)],
-                facing:     playerFacing.toFixed(2),
-                wallSegs:   wallSegments.length,
-                corners:    wallCorners.length,
-    });
-
     fogRT.clear();
     fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
 
