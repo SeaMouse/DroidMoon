@@ -7,10 +7,14 @@
 
 import Phaser from 'phaser';
 import {
-    TILE_SIZE,
+    TILE_SIZE, PLAYER_WEIGHT,
     NODE_CONNECT_DIST, WANDER_BACKTRACK_CHANCE,
+    PLAYER_MAX_ENERGY, INVINCIBILITY_MS,
+    ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT,
+    LIFT_HOLD_MS,
     FOG_DARKNESS, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
-    enemyTypes,
+    DIM_COLOUR,
+    deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
 import { state } from './state.js';
 
@@ -420,7 +424,7 @@ export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle
 export function updateFogOfWar() {
     if (!state.fogRT) { return; }
 
-    if (!isDeckClearedInline()) {
+    if (!isDeckCleared()) {
         state.fogRT.setVisible(false);
         return;
     }
@@ -454,12 +458,6 @@ export function updateFogOfWar() {
         state.fogRT.erase(eraseGfx);
         eraseGfx.destroy();
     }
-}
-
-// Temporary inline copy — `isDeckCleared` lives in main.js until wave 2.
-// Will be removed when wave 2 moves the real one here.
-function isDeckClearedInline() {
-    return !!(state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared);
 }
 
 // ─────────────────────────────────────────────
@@ -527,7 +525,7 @@ export class Enemy {
 
         if (time < this.knockbackUntil) {
             if (this.weaponType !== null && los && distToPlayer < this.detectRange) {
-                enemyShootInline(this, time);
+                enemyShoot(this, time);
             }
             return;
         }
@@ -593,7 +591,7 @@ export class Enemy {
 
         if (this.weaponType !== null) {
             if (los && distToPlayer < this.detectRange) {
-                enemyShootInline(this, time);
+                enemyShoot(this, time);
             }
         }
     }
@@ -610,9 +608,336 @@ export class Enemy {
     }
 }
 
-// Temporary inline copy of enemyShoot — moves out in wave 2.
-import { weaponTypes } from './config.js';
-function enemyShootInline(enemy, time) {
+// ─────────────────────────────────────────────
+//  LIFT SYSTEM
+// ─────────────────────────────────────────────
+export const Lifts = {
+    zones:        [],
+    zoneGroup:    null,
+    playerOn:     null,
+    holdStart:    0,
+    progressBg:   null,
+    progressFill: null,
+    inputGated:   false,
+};
+
+export function parseLiftZones(map) {
+    let objLayer = map.getObjectLayer('Lifts');
+
+    if (!objLayer) {
+        const raw = map.objects
+        ? map.objects.find(l => l.name === 'Lifts')
+        : null;
+        if (raw) { objLayer = raw; }
+    }
+
+    if (!objLayer) {
+        console.log('LIFTS: No "Lifts" object layer found on this deck.');
+        return;
+    }
+
+    for (const obj of objLayer.objects) {
+        let connectedDecks = [];
+        if (obj.properties) {
+            const decksProp = obj.properties.find(p => p.name === 'Decks');
+            if (decksProp) {
+                connectedDecks = decksProp.value.split(',').map(s => s.trim());
+            }
+        }
+
+        if (connectedDecks.length === 0) {
+            console.warn('LIFTS: Lift object at (' + obj.x + ',' + obj.y + ') has no "decks" property — skipping.');
+            continue;
+        }
+
+        const w = obj.width  || TILE_SIZE;
+        const h = obj.height || TILE_SIZE;
+        const cx = obj.x + w / 2;
+        const cy = obj.y + h / 2;
+
+        const zone = state.scene.add.zone(cx, cy, w, h);
+        state.scene.physics.add.existing(zone, true);
+        Lifts.zoneGroup.add(zone);
+
+        const indicator = state.scene.add.graphics();
+        indicator.lineStyle(2, 0x44aaff, 0.6);
+        indicator.strokeRect(obj.x, obj.y, w, h);
+        indicator.fillStyle(0x44aaff, 0.15);
+        indicator.fillRect(obj.x, obj.y, w, h);
+
+        state.scene.add.text(cx, obj.y - 8, 'LIFT', {
+            fontFamily: 'monospace', fontSize: '8px', fill: '#44aaff'
+        }).setOrigin(0.5, 1);
+
+        Lifts.zones.push({
+            zone:  zone,
+            x:     cx,
+            y:     cy,
+            decks: connectedDecks,
+        });
+    }
+
+    console.log('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + state.currentDeck + '.');
+}
+
+export function findPlayerLiftOverlap() {
+    const pb = state.player.getBounds();
+    for (const lift of Lifts.zones) {
+        const zb = lift.zone.getBounds();
+        if (Phaser.Geom.Intersects.RectangleToRectangle(pb, zb)) {
+            return lift;
+        }
+    }
+    return null;
+}
+
+export function updateLiftHold(time, pad) {
+    const DEAD_ZONE = 0.15;
+    let holdInput = false;
+
+    if (pad) {
+        const RSX = pad.rightStick.x;
+        const RSY = pad.rightStick.y;
+        holdInput = (Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE);
+    }
+
+    if (state.keys.f.isDown) { holdInput = true; }
+
+    if (Lifts.inputGated) {
+        if (!holdInput) { Lifts.inputGated = false; }
+        Lifts.playerOn = null;
+        return;
+    }
+
+    Lifts.playerOn = findPlayerLiftOverlap();
+
+    if (Lifts.playerOn && holdInput) {
+        if (Lifts.holdStart === 0) {
+            Lifts.holdStart = time;
+        }
+
+        const elapsed  = time - Lifts.holdStart;
+        const progress = Math.min(elapsed / LIFT_HOLD_MS, 1);
+
+        const barW = 120;
+        const barH = 10;
+        const barX = (800 - barW) / 2;
+        const barY = 560;
+
+        Lifts.progressBg.setVisible(true);
+        Lifts.progressBg.clear();
+        Lifts.progressBg.fillStyle(0x222244, 0.8);
+        Lifts.progressBg.fillRect(barX, barY, barW, barH);
+
+        Lifts.progressFill.setVisible(true);
+        Lifts.progressFill.clear();
+        Lifts.progressFill.fillStyle(0x44aaff, 1);
+        Lifts.progressFill.fillRect(barX, barY, Math.round(barW * progress), barH);
+
+        if (progress >= 1) {
+            Lifts.holdStart = 0;
+            Lifts.progressBg.setVisible(false);
+            Lifts.progressFill.setVisible(false);
+            showDeckSelection(Lifts.playerOn);
+        }
+    } else {
+        if (Lifts.holdStart !== 0) {
+            Lifts.holdStart = 0;
+            Lifts.progressBg.setVisible(false);
+            Lifts.progressFill.setVisible(false);
+        }
+    }
+}
+
+export function showDeckSelection(liftData) {
+    state.scene.scene.pause();
+    state.scene.scene.launch('DeckSelectScene', { lift: liftData });
+}
+
+export function switchToDeck(targetDeck) {
+    saveDeckState(state.currentDeck);
+    state.lastDeck       = state.currentDeck;
+    state.playerSpawnPos = null;
+    state.currentDeck    = targetDeck;
+    state.scene.scene.restart();
+}
+
+// ─────────────────────────────────────────────
+//  DECK STATE
+// ─────────────────────────────────────────────
+export function saveDeckState(deckName) {
+    const saved = state.enemies.map(e => e.serialise());
+
+    const wasCleared = state.deckStates[deckName] && state.deckStates[deckName].cleared;
+    state.deckStates[deckName] = {
+        enemies: saved,
+        cleared: wasCleared || false,
+    };
+
+    console.log('STATE: Saved ' + saved.length + ' enemy(s) for ' + deckName + '.');
+}
+
+function restoreEnemiesFromState(deckState) {
+    for (const saved of deckState.enemies) {
+        if (!enemyTypes[saved.typeName]) { continue; }
+
+        state.enemies.push(new Enemy(state.scene, saved.typeName, saved.x, saved.y, {
+            hp:             saved.hp,
+            currentNodeId:  saved.currentNodeId,
+            previousNodeId: saved.previousNodeId,
+        }));
+    }
+}
+
+function spawnFreshEnemies(enemyDefs) {
+    for (const def of enemyDefs) {
+        if (!enemyTypes[def.type]) {
+            console.warn('Unknown enemy type "' + def.type + '" — skipping.');
+            continue;
+        }
+
+        const x = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
+        const y = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
+
+        state.enemies.push(new Enemy(state.scene, def.type, x, y));
+    }
+}
+
+export function spawnEnemiesForDeck(deckName) {
+    if (state.deckStates[deckName]) {
+        console.log('STATE: Restoring saved enemies for ' + deckName + '.');
+        restoreEnemiesFromState(state.deckStates[deckName]);
+    } else {
+        const deckDef = deckDefinitions[deckName];
+        console.log('STATE: Spawning ' + deckDef.enemies.length + ' fresh enemy(s) for ' + deckName + '.');
+        spawnFreshEnemies(deckDef.enemies);
+    }
+}
+
+export function isDeckCleared() {
+    return !!(state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared);
+}
+
+export function areAllDecksCleared() {
+    for (const deckName of Object.keys(deckDefinitions)) {
+        const def = deckDefinitions[deckName];
+        if (!def.enemies || def.enemies.length === 0) { continue; }
+        if (!state.deckStates[deckName] || !state.deckStates[deckName].cleared) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ─────────────────────────────────────────────
+//  DECK SHUTDOWN
+// ─────────────────────────────────────────────
+export function applyDeckDim() {
+    state.wallLayer.forEachTile(tile => {
+        const isLight = tile.properties && tile.properties.light;
+        tile.tint = isLight ? 0xffffff : DIM_COLOUR;
+    });
+}
+
+export function checkDeckClearance() {
+    if (state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared) { return; }
+    if (state.enemies.length > 0) { return; }
+
+    const deckDef = deckDefinitions[state.currentDeck];
+    if (!deckDef || !deckDef.enemies || deckDef.enemies.length === 0) { return; }
+
+    triggerDeckShutdown();
+
+    if (areAllDecksCleared()) {
+        state.scene.time.delayedCall(2500, () => {
+            state.scene.scene.start('EndScene', { result: 'won' });
+        });
+    }
+}
+
+function triggerDeckShutdown() {
+    if (!state.deckStates[state.currentDeck]) {
+        state.deckStates[state.currentDeck] = { enemies: [] };
+    }
+    state.deckStates[state.currentDeck].cleared = true;
+
+    applyDeckDim();
+    showDeckClearedMessage();
+
+    console.log('SHUTDOWN: ' + state.currentDeck + ' cleared — lights out.');
+}
+
+function showDeckClearedMessage() {
+    const msg = state.scene.add.text(400, 260, 'DECK POWER DOWN', {
+        fontFamily: 'monospace', fontSize: '32px',
+        fill: '#44aaff', stroke: '#000000', strokeThickness: 3
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
+
+    state.scene.tweens.add({
+        targets:    msg,
+        alpha:      1,
+        duration:   500,
+        yoyo:       true,
+        hold:       1500,
+        onComplete: () => msg.destroy(),
+    });
+}
+
+// ─────────────────────────────────────────────
+//  HUD
+// ─────────────────────────────────────────────
+export function createHUD(scene) {
+    const BAR_X = 12;
+    const BAR_Y = 12;
+
+    scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
+        fontFamily: 'monospace', fontSize: '10px', fill: '#aaffcc'
+    }).setScrollFactor(0).setDepth(50);
+
+    const barBg = scene.add.graphics();
+    barBg.fillStyle(0x222233, 1);
+    barBg.fillRect(BAR_X, BAR_Y + 12, ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT);
+    barBg.setScrollFactor(0).setDepth(50);
+
+    state.energyBarFill = scene.add.graphics();
+    state.energyBarFill.setScrollFactor(0).setDepth(51);
+
+    state.killText = scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
+        fontFamily: 'monospace', fontSize: '12px', fill: '#aaffcc'
+    });
+    state.killText.setScrollFactor(0).setDepth(50);
+
+    const deckDef = deckDefinitions[state.currentDeck];
+    state.deckLabel = scene.add.text(800 - 12, 12, deckDef ? deckDef.label : state.currentDeck, {
+        fontFamily: 'monospace', fontSize: '11px', fill: '#44aaff', align: 'right'
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(50);
+
+    updateHUD();
+}
+
+export function updateHUD() {
+    const pct = state.playerEnergy / PLAYER_MAX_ENERGY;
+
+    let colour;
+    if      (pct > 0.5) { colour = 0x00dd55; }
+    else if (pct > 0.25){ colour = 0xffcc00; }
+    else                { colour = 0xff2244; }
+
+    state.energyBarFill.clear();
+    state.energyBarFill.fillStyle(colour, 1);
+    state.energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
+
+    state.killText.setText('Destroyed: ' + state.killCount);
+}
+
+// ─────────────────────────────────────────────
+//  COMBAT — bullets and damage
+// ─────────────────────────────────────────────
+export function fireBullet(x, y, dx, dy) {
+    state.playerBullets.fire(x, y, dx, dy);
+}
+
+export function enemyShoot(enemy, time) {
     const weaponDef = weaponTypes[enemy.weaponType];
     if (!weaponDef) { return; }
 
@@ -627,4 +952,264 @@ function enemyShootInline(enemy, time) {
         speed:      weaponDef.bulletSpeed,
         damage:     weaponDef.damage,
     });
+}
+
+export function bulletHitEnemy(bullet, enemySprite) {
+    const damage = bullet.getData('damage') ?? 1;
+    state.playerBullets.deactivate(bullet);
+
+    const enemy = enemySprite.getData('entity');
+    if (!enemy) { return; }
+
+    enemy.hp -= damage;
+
+    if (enemy.hp <= 0) {
+        state.enemies = state.enemies.filter(e => e !== enemy);
+
+        enemySprite.setActive(false);
+        enemySprite.setVisible(false);
+        enemySprite.body.enable = false;
+
+        state.killCount++;
+        updateHUD();
+
+        state.scene.time.delayedCall(100, () => {
+            enemySprite.destroy();
+        });
+        checkDeckClearance();
+    } else {
+        state.scene.tweens.add({
+            targets:  enemySprite,
+            alpha:    0.3,
+            duration: 60,
+            yoyo:     true
+        });
+    }
+}
+
+export function playerHitByEnemyBullet(playerSprite, bullet) {
+    const damage = bullet.getData('damage') ?? 20;
+    state.enemyBullets.deactivate(bullet);
+    applyDamageToPlayer(damage);
+}
+
+export function applyDamageToPlayer(damage) {
+    if (state.playerInvincible) { return; }
+
+    state.playerEnergy = Math.max(0, state.playerEnergy - damage);
+    updateHUD();
+
+    if (state.playerEnergy <= 0) {
+        triggerGameOver();
+        return;
+    }
+
+    state.playerInvincible = true;
+
+    state.scene.tweens.add({
+        targets:    state.player,
+        alpha:      0.2,
+        duration:   100,
+        yoyo:       true,
+        repeat:     5,
+        onComplete: () => { state.player.setAlpha(1); }
+    });
+
+    state.scene.time.delayedCall(INVINCIBILITY_MS, () => {
+        state.playerInvincible = false;
+    });
+}
+
+export function triggerGameOver() {
+    state.gameOver = true;
+    state.player.setVelocity(0);
+    state.player.setAlpha(0.3);
+
+    for (const enemy of state.enemies) { enemy.sprite.setVelocity(0); }
+
+    state.scene.time.delayedCall(1200, () => {
+        state.scene.scene.start('EndScene', { result: 'lost' });
+    });
+}
+
+export function onPlayerEnemyCollide(playerSprite, enemySprite) {
+    const enemy = enemySprite.getData('entity');
+    if (!enemy) { return; }
+
+    const wasInvincible = state.playerInvincible;
+    applyDamageToPlayer(enemy.contactDamage);
+
+    if (!wasInvincible) {
+        const wEnemy = enemyTypes[enemy.typeName].weight;
+        const total  = PLAYER_WEIGHT + wEnemy;
+
+        const dx   = enemySprite.x - playerSprite.x;
+        const dy   = enemySprite.y - playerSprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx   = dx / dist;
+        const ny   = dy / dist;
+
+        const PLAYER_BOUNCE = 220;
+        playerSprite.setVelocity(
+            -nx * PLAYER_BOUNCE * (wEnemy / total),
+                                 -ny * PLAYER_BOUNCE * (wEnemy / total)
+        );
+
+        if (wEnemy < PLAYER_WEIGHT) {
+            const MAX_PUSH   = 200;
+            const pushFactor = (PLAYER_WEIGHT - wEnemy) / PLAYER_WEIGHT;
+            enemySprite.setVelocity(
+                nx * pushFactor * MAX_PUSH,
+                ny * pushFactor * MAX_PUSH
+            );
+
+            enemy.knockbackUntil = state.scene.time.now + 150;
+            reverseEnemyCourse(enemy);
+        }
+    }
+}
+
+export function onEnemyEnemyCollide(spriteA, spriteB) {
+    const enemyA = spriteA.getData('entity');
+    const enemyB = spriteB.getData('entity');
+    if (!enemyA || !enemyB) { return; }
+
+    const now = state.scene.time.now;
+    if (now < enemyA.bounceCooldown || now < enemyB.bounceCooldown) { return; }
+
+    const wA    = enemyTypes[enemyA.typeName].weight;
+    const wB    = enemyTypes[enemyB.typeName].weight;
+    const total = wA + wB;
+
+    const dx   = spriteB.x - spriteA.x;
+    const dy   = spriteB.y - spriteA.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx   = dx / dist;
+    const ny   = dy / dist;
+
+    const BOUNCE = 100;
+    spriteA.setVelocity(-nx * BOUNCE * (wB / total), -ny * BOUNCE * (wB / total));
+    spriteB.setVelocity( nx * BOUNCE * (wA / total),  ny * BOUNCE * (wA / total));
+
+    const COOLDOWN_MS = 220;
+    enemyA.bounceCooldown = now + COOLDOWN_MS;
+    enemyB.bounceCooldown = now + COOLDOWN_MS;
+
+    enemyA.knockbackUntil = now + COOLDOWN_MS;
+    enemyB.knockbackUntil = now + COOLDOWN_MS;
+
+    reverseEnemyCourse(enemyA);
+    reverseEnemyCourse(enemyB);
+}
+
+// ─────────────────────────────────────────────
+//  DEBUG
+// ─────────────────────────────────────────────
+export const Debug = {
+    nav:        null,
+    navStatic:  null,
+    walls:      null,
+    rays:       null,
+    vis:        null,
+    nodeLabels: [],
+};
+
+export function drawDebugWallSegments() {
+    const gfx = state.scene.add.graphics();
+    gfx.setDepth(49);
+
+    gfx.lineStyle(1.5, 0xff00ff, 0.9);
+    for (const seg of state.wallSegments) {
+        gfx.beginPath();
+        gfx.moveTo(seg.x1, seg.y1);
+        gfx.lineTo(seg.x2, seg.y2);
+        gfx.strokePath();
+    }
+
+    gfx.fillStyle(0xff8800, 1);
+    for (const c of state.wallCorners) {
+        gfx.fillCircle(c.x, c.y, 3);
+    }
+
+    gfx.setVisible(false);
+    Debug.walls = gfx;
+}
+
+export function drawDebugRays() {
+    const gfx = Debug.rays;
+    gfx.clear();
+
+    const RAYS = 64;
+    gfx.lineStyle(1, 0xffee00, 0.6);
+    for (let i = 0; i < RAYS; i++) {
+        const angle = (i / RAYS) * Math.PI * 2;
+        const hit   = castRay(state.player.x, state.player.y, angle);
+        gfx.beginPath();
+        gfx.moveTo(state.player.x, state.player.y);
+        gfx.lineTo(hit.x, hit.y);
+        gfx.strokePath();
+    }
+}
+
+export function drawDebugVisibilityPolygon() {
+    const gfx = Debug.vis;
+    gfx.clear();
+
+    const poly = computeVisibilityPolygon(state.player.x, state.player.y);
+    if (poly.length < 3) { return; }
+
+    gfx.fillStyle(0xffee88, 0.30);
+    gfx.fillPoints(poly, true);
+
+    gfx.lineStyle(1, 0xffcc00, 0.8);
+    gfx.strokePoints(poly, true);
+
+    gfx.fillStyle(0xff6600, 1);
+    for (const p of poly) {
+        gfx.fillCircle(p.x, p.y, 2);
+    }
+}
+
+export function drawDebugNavStatic() {
+    const staticGfx = state.scene.add.graphics();
+    staticGfx.setDepth(50);
+
+    Debug.nodeLabels = [];
+
+    staticGfx.lineStyle(2, 0x00ff88, 0.85);
+    for (const node of state.navNodes) {
+        for (const neighbourId of node.neighbours) {
+            if (neighbourId > node.id) {
+                staticGfx.beginPath();
+                staticGfx.moveTo(node.x, node.y);
+                staticGfx.lineTo(state.navNodes[neighbourId].x, state.navNodes[neighbourId].y);
+                staticGfx.strokePath();
+            }
+        }
+        staticGfx.fillStyle(0x00ccff, 0.85);
+        staticGfx.fillCircle(node.x, node.y, 5);
+
+        const label = state.scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+            fontFamily: 'monospace', fontSize: '9px', fill: '#00ccff'
+        }).setDepth(51).setVisible(false);
+        Debug.nodeLabels.push(label);
+    }
+    staticGfx.setVisible(false);
+    Debug.nav.setVisible(false);
+    Debug.navStatic = staticGfx;
+}
+
+export function drawDebugNavDynamic() {
+    if (!Debug.nav.visible) { return; }
+    Debug.nav.clear();
+    for (const enemy of state.enemies) {
+        if (!enemy.nodeTarget) { continue; }
+        Debug.nav.lineStyle(4, 0xffee00, 0.9);
+        Debug.nav.beginPath();
+        Debug.nav.moveTo(enemy.sprite.x, enemy.sprite.y);
+        Debug.nav.lineTo(enemy.nodeTarget.x, enemy.nodeTarget.y);
+        Debug.nav.strokePath();
+        Debug.nav.fillStyle(0xffee00, 1);
+        Debug.nav.fillCircle(enemy.nodeTarget.x, enemy.nodeTarget.y, 7);
+    }
 }
