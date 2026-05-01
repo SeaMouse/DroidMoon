@@ -1,3 +1,4 @@
+import Phaser from 'phaser';
 // ─────────────────────────────────────────────
 //  SCENE: TITLE
 // ─────────────────────────────────────────────
@@ -64,20 +65,22 @@ const titleScene = {
 // ─────────────────────────────────────────────
 //  SCENE: DECK SELECT  (overlay menu)
 // ─────────────────────────────────────────────
-const deckSelectScene = {
-    key: 'DeckSelectScene',
+class DeckSelectScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'DeckSelectScene' });
+    }
 
-    init: function(data) {
-        this.lift = data.lift;
-        this.index = 0;
-        this.items = [];
+    init(data) {
+        this.lift        = data.lift;
+        this.index       = 0;
+        this.items       = [];
         this.dpadPrevY   = 0;
         this.confirmPrev = false;
         this.cancelPrev  = false;
-        this.ready       = false;   // input lockout flag
-    },
+        this.ready       = false;
+    }
 
-    create: function() {
+    create() {
         // Backdrop
         this.add.graphics()
         .fillStyle(0x000000, 0.75)
@@ -94,7 +97,6 @@ const deckSelectScene = {
                           fontFamily: 'monospace', fontSize: '11px', fill: '#666688'
                       }).setOrigin(0.5).setScrollFactor(0);
 
-                      // Build the option list: current deck first, then connected decks
                       const connectedDecks = this.lift.decks;
                       const allOptions     = [currentDeck, ...connectedDecks.filter(d => d !== currentDeck)];
 
@@ -112,19 +114,16 @@ const deckSelectScene = {
                           yPos += 44;
                       }
 
-                      // Cache keys for this scene
                       this.menuKeys = this.input.keyboard.addKeys({
                           up: 'UP', down: 'DOWN', enter: 'ENTER', esc: 'ESC',
                       });
 
                       this.highlight(0);
 
-                      // Brief input lockout — the same button that opened the menu
-                      // is probably still held down on this very tick.
                       this.time.delayedCall(150, () => { this.ready = true; });
-    },
+    }
 
-    highlight: function(index) {
+    highlight(index) {
         for (let i = 0; i < this.items.length; i++) {
             const item = this.items[i];
             const label = deckDefinitions[item.deckName]?.label || item.deckName;
@@ -137,14 +136,13 @@ const deckSelectScene = {
                 item.text.setText('  ' + label + suffix);
             }
         }
-    },
+    }
 
-    update: function() {
+    update() {
         if (!this.ready) { return; }
 
         const pad = this.input.gamepad.getPad(0);
 
-        // --- Keyboard ---
         if (Phaser.Input.Keyboard.JustDown(this.menuKeys.up)) {
             this.index = (this.index - 1 + this.items.length) % this.items.length;
             this.highlight(this.index);
@@ -162,7 +160,6 @@ const deckSelectScene = {
             return;
         }
 
-        // --- Gamepad ---
         if (pad) {
             const dpadY = pad.leftStick.y;
             const T = 0.5;
@@ -185,25 +182,24 @@ const deckSelectScene = {
             if (bDown && !this.cancelPrev) { this.cancel(); return; }
             this.cancelPrev = bDown;
         }
-    },
+    }
 
-    confirm: function() {
+    confirm() {
         const selected = this.items[this.index];
         if (!selected || selected.deckName === currentDeck) {
             this.cancel();
             return;
         }
-        // Tell the game scene to switch decks, then close.
         this.scene.stop();
         this.scene.resume('GameScene');
         switchToDeck(selected.deckName);
-    },
+    }
 
-    cancel: function() {
+    cancel() {
         this.scene.stop();
         this.scene.resume('GameScene');
-    },
-};
+    }
+}
 
 // ─────────────────────────────────────────────
 //  SCENE: GAMEPLAY  (wraps your existing preload/create/update)
@@ -293,7 +289,7 @@ const config = {
     input: {
         gamepad: true
     },
-    scene: [titleScene, gameScene, endScene, deckSelectScene]
+    scene: [titleScene, gameScene, endScene, DeckSelectScene]
 };
 
 const game = new Phaser.Game(config);
@@ -1132,7 +1128,7 @@ function updateLiftHold(time, pad) {
         }
     }
 }
-}
+
 
 // ─────────────────────────────────────────────
 //  DECK SELECTION SCREEN
@@ -1957,6 +1953,16 @@ function updateFogOfWar() {
         return;
     }
     fogRT.setVisible(true);
+
+    console.log('FOG:', {
+        cleared:    isDeckCleared(),
+                fogVisible: fogRT.visible,
+                fogAlpha:   fogRT.alpha,
+                playerXY:   [Math.round(player.x), Math.round(player.y)],
+                facing:     playerFacing.toFixed(2),
+                wallSegs:   wallSegments.length,
+                corners:    wallCorners.length,
+    });
 
     fogRT.clear();
     fogRT.fill(FOG_COLOUR, FOG_DARKNESS);

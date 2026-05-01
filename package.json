@@ -1,0 +1,28 @@
+{
+  "name": "droid-moon",
+  "version": "1.0.0",
+  "description": "",
+  "main": "game.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SeaMouse/DroidMoon.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/SeaMouse/DroidMoon/issues"
+  },
+  "homepage": "https://github.com/SeaMouse/DroidMoon#readme",
+  "devDependencies": {
+    "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  }
+}
