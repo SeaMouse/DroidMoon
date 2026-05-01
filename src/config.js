@@ -1,0 +1,136 @@
+// ─────────────────────────────────────────────
+//  GAME CONFIG — constants and data definitions
+// ─────────────────────────────────────────────
+
+export const TILE_SIZE       = 32;
+export const PLAYER_SPEED    = 200;
+export const PLAYER_WEIGHT   = 2;
+export const BULLET_SPEED    = 400;
+export const BULLET_COOLDOWN = 200;
+
+export const NODE_CONNECT_DIST       = 250;
+export const WANDER_BACKTRACK_CHANCE = 0.05;
+
+export const PLAYER_MAX_ENERGY = 100;
+export const INVINCIBILITY_MS  = 1200;
+
+export const ENERGY_BAR_WIDTH  = 150;
+export const ENERGY_BAR_HEIGHT = 14;
+
+export const LIFT_HOLD_MS = 2000;
+
+export const FOG_DARKNESS           = 0.85;
+export const FOG_COLOUR             = 0x000011;
+export const LIGHT_MAX_RANGE        = 550;
+export const CONE_HALF_ANGLE        = Math.PI / 5;
+export const LIGHT_BAND_ERASE_ALPHA = 0.35;
+
+export const DIM_COLOUR = 0x444466;
+
+// ─────────────────────────────────────────────
+//  DECK DEFINITIONS
+// ─────────────────────────────────────────────
+export const deckDefinitions = {
+    deck1: {
+        mapKey:      'level1',
+        mapFile:     'assets/level1.tmj',
+        label:       'Deck 1 - Bridge',
+        playerStart: { x: 82, y: 82 },
+        enemies: [
+            { type: 'cleaner',        startTile: {x: 4,  y: 2}  },
+            { type: 'cleaner',        startTile: {x: 4,  y: 17} },
+            { type: 'patrol_drone',   startTile: {x: 12, y: 8}  },
+            { type: 'security_light', startTile: {x: 1,  y: 10} },
+        ],
+    },
+    deck2: {
+        mapKey:      'level2',
+        mapFile:     'assets/level2.tmj',
+        label:       'Deck 2 - Engineering',
+        playerStart: { x: 82, y: 82 },
+        enemies: [
+            { type: 'cleaner',         startTile: {x: 6,  y: 4}  },
+            { type: 'patrol_drone',    startTile: {x: 10, y: 10} },
+            { type: 'patrol_drone',    startTile: {x: 3,  y: 14} },
+            { type: 'security_light',  startTile: {x: 14, y: 6}  },
+            { type: 'security_heavy',  startTile: {x: 8,  y: 16} },
+        ],
+    },
+    deck3: {
+        mapKey:      'level3',
+        mapFile:     'assets/level3.tmj',
+        label:       'Deck 3 - Cargo Bay',
+        playerStart: { x: 82, y: 82 },
+        enemies: [
+            { type: 'cleaner',         startTile: {x: 5,  y: 5}  },
+            { type: 'security_light',  startTile: {x: 8,  y: 12} },
+            { type: 'security_light',  startTile: {x: 16, y: 3}  },
+            { type: 'security_heavy',  startTile: {x: 11, y: 15} },
+            { type: 'security_heavy',  startTile: {x: 2,  y: 8}  },
+        ],
+    },
+};
+
+// ─────────────────────────────────────────────
+//  WEAPON TYPE CATALOGUE
+// ─────────────────────────────────────────────
+export const weaponTypes = {
+    blaster: {
+        cooldown:    1500,
+        bulletSpeed: 350,
+        damage:      20,
+        colour:      0xff4444,
+    },
+    heavy_blaster: {
+        cooldown:    2800,
+        bulletSpeed: 280,
+        damage:      35,
+        colour:      0xff00ff,
+    },
+};
+
+// ─────────────────────────────────────────────
+//  ENEMY TYPE CATALOGUE
+// ─────────────────────────────────────────────
+export const enemyTypes = {
+    cleaner: {
+        label:         'Cleaning Bot',
+        colour:        0x88ccff,
+        speed:         55,
+        detectRange:   0,
+        hp:            1,
+        contactDamage: 5,
+        weaponType:    null,
+        weight:        2,
+    },
+    patrol_drone: {
+        label:         'Patrol Drone',
+        colour:        0xff8800,
+        speed:         100,
+        detectRange:   0,
+        hp:            2,
+        contactDamage: 10,
+        weaponType:    null,
+        weight:        3,
+    },
+    security_light: {
+        label:         'Security Droid (Light)',
+        colour:        0xff3300,
+        speed:         120,
+        detectRange:   220,
+        hp:            2,
+        contactDamage: 15,
+        weaponType:    'blaster',
+        weight:        5,
+    },
+    security_heavy: {
+        label:         'Security Droid (Heavy)',
+        colour:        0xcc00ff,
+        speed:         75,
+        detectRange:   260,
+        hp:            4,
+        contactDamage: 25,
+        weaponType:    'heavy_blaster',
+        weight:        8,
+    },
+};

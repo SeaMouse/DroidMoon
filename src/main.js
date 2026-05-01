@@ -1,4 +1,16 @@
 import Phaser from 'phaser';
+
+import {
+    TILE_SIZE, PLAYER_SPEED, PLAYER_WEIGHT, BULLET_SPEED, BULLET_COOLDOWN,
+    NODE_CONNECT_DIST, WANDER_BACKTRACK_CHANCE,
+    PLAYER_MAX_ENERGY, INVINCIBILITY_MS,
+    ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT,
+    LIFT_HOLD_MS,
+    FOG_DARKNESS, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
+    DIM_COLOUR,
+    deckDefinitions, weaponTypes, enemyTypes,
+} from './config.js';
+
 // ─────────────────────────────────────────────
 //  SCENE: TITLE
 // ─────────────────────────────────────────────
@@ -313,11 +325,7 @@ let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
 let wallSegments = [];   // [{x1, y1, x2, y2}] — exposed wall edges for raycasting
 let wallCorners = [];
 let fogRT;
-const FOG_DARKNESS = 0.85;   // 0 = no fog, 1 = pitch black
-const FOG_COLOUR   = 0x000011;
-const LIGHT_MAX_RANGE = 550;   // pixels — tweak to taste
 let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
-const CONE_HALF_ANGLE = Math.PI / 5;   // 36° each side → ~72° cone
 
 let playerBullets;    // BulletPool instance
 let enemyBullets;     // BulletPool instance
@@ -329,29 +337,16 @@ let scene;
 let energyBarFill;
 let killText;
 let killCount = 0;
-const ENERGY_BAR_WIDTH  = 150;
-const ENERGY_BAR_HEIGHT = 14;
 let deckLabel;   // shows current deck name on HUD
 
 // --- Player energy ---
 let playerEnergy;
-const PLAYER_MAX_ENERGY = 100;
 let playerInvincible    = false;
-const INVINCIBILITY_MS  = 1200;
 
 // --- Game state ---
 let gameOver = false;
 let gameOverText;
 let restartText;
-
-const TILE_SIZE       = 32;
-const PLAYER_SPEED    = 200;
-const PLAYER_WEIGHT   = 2;
-const BULLET_SPEED    = 400;
-const BULLET_COOLDOWN = 200;
-
-const NODE_CONNECT_DIST     = 250;   // px — max distance to auto-link two nodes
-const WANDER_BACKTRACK_CHANCE = 0.05; // odds of returning to previous node
 
 let lastShotTime = 0;
 
@@ -371,64 +366,10 @@ let deckStates     = {};                // persisted between deck switches
 let playerSpawnPos = null;              // set before switching; null = use default
 let lastDeck       = null;    // which deck we arrived FROM via lift (null = fresh start)
 
-// ─────────────────────────────────────────────
-//  DECK DEFINITIONS
-// ─────────────────────────────────────────────
-// Each deck has its own Tiled map and a fresh set of enemy placements.
-// The mapKey must match the key used in preload().
-//
-// To add a new deck:
-//   1. Create the .tmj in Tiled (same tileset, include a Waypoints layer
-//      and a Lifts object layer — see LIFT SYSTEM notes below).
-//   2. Add an entry here.
-//   3. The preload loop picks it up automatically.
-//
-const deckDefinitions = {
-    deck1: {
-        mapKey:      'level1',
-        mapFile:     'assets/level1.tmj',
-        label:       'Deck 1 - Bridge',
-        playerStart: { x: 82, y: 82 },
-        enemies: [
-            { type: 'cleaner',        startTile: {x: 4,  y: 2}  },
-            { type: 'cleaner',        startTile: {x: 4,  y: 17} },
-            { type: 'patrol_drone',   startTile: {x: 12, y: 8}  },
-            { type: 'security_light', startTile: {x: 1,  y: 10} },
-        ],
-    },
-    deck2: {
-        mapKey:      'level2',
-        mapFile:     'assets/level2.tmj',
-        label:       'Deck 2 - Engineering',
-        playerStart: { x: 82, y: 82 },
-        enemies: [
-            { type: 'cleaner',         startTile: {x: 6,  y: 4}  },
-            { type: 'patrol_drone',    startTile: {x: 10, y: 10} },
-            { type: 'patrol_drone',    startTile: {x: 3,  y: 14} },
-            { type: 'security_light',  startTile: {x: 14, y: 6}  },
-            { type: 'security_heavy',  startTile: {x: 8,  y: 16} },
-        ],
-    },
-    deck3: {
-        mapKey:      'level3',
-        mapFile:     'assets/level3.tmj',
-        label:       'Deck 3 - Cargo Bay',
-        playerStart: { x: 82, y: 82 },
-        enemies: [
-            { type: 'cleaner',         startTile: {x: 5,  y: 5}  },
-            { type: 'security_light',  startTile: {x: 8,  y: 12} },
-            { type: 'security_light',  startTile: {x: 16, y: 3}  },
-            { type: 'security_heavy',  startTile: {x: 11, y: 15} },
-            { type: 'security_heavy',  startTile: {x: 2,  y: 8}  },
-        ],
-    },
-};
 
 // ─────────────────────────────────────────────
 //  LIFT SYSTEM
 // ─────────────────────────────────────────────
-const LIFT_HOLD_MS = 2000;   // hold duration to activate
-
 const Lifts = {
     zones:        [],     // [{zone, x, y, decks:[string]}]
     zoneGroup:    null,   // physics group for overlap detection
@@ -439,23 +380,6 @@ const Lifts = {
     inputGated:   false,  // (moved from below — see step A2)
 };
 
-// ─────────────────────────────────────────────
-//  WEAPON TYPE CATALOGUE
-// ─────────────────────────────────────────────
-const weaponTypes = {
-    blaster: {
-        cooldown:    1500,
-        bulletSpeed: 350,
-        damage:      20,
-        colour:      0xff4444,
-    },
-    heavy_blaster: {
-        cooldown:    2800,
-        bulletSpeed: 280,
-        damage:      35,
-        colour:      0xff00ff,
-    },
-};
 
 // ─────────────────────────────────────────────
 //  BULLET POOL
@@ -499,51 +423,6 @@ class BulletPool {
     }
 }
 
-// ─────────────────────────────────────────────
-//  ENEMY TYPE CATALOGUE
-// ─────────────────────────────────────────────
-const enemyTypes = {
-    cleaner: {
-        label:         'Cleaning Bot',
-        colour:        0x88ccff,
-        speed:         55,
-        detectRange:   0,
-        hp:            1,
-        contactDamage: 5,
-        weaponType:    null,
-        weight:        2,
-    },
-    patrol_drone: {
-        label:         'Patrol Drone',
-        colour:        0xff8800,
-        speed:         100,
-        detectRange:   0,
-        hp:            2,
-        contactDamage: 10,
-        weaponType:    null,
-        weight:        3,
-    },
-    security_light: {
-        label:         'Security Droid (Light)',
-        colour:        0xff3300,
-        speed:         120,
-        detectRange:   220,
-        hp:            2,
-        contactDamage: 15,
-        weaponType:    'blaster',
-        weight:        5,
-    },
-    security_heavy: {
-        label:         'Security Droid (Heavy)',
-        colour:        0xcc00ff,
-        speed:         75,
-        detectRange:   260,
-        hp:            4,
-        contactDamage: 25,
-        weaponType:    'heavy_blaster',
-        weight:        8,
-    },
-};
 
 // ─────────────────────────────────────────────
 //  ENEMY CLASS
@@ -1643,8 +1522,6 @@ function areAllDecksCleared() {
 // ─────────────────────────────────────────────
 //  DECK SHUTDOWN — "lights out" when a deck is cleared
 // ─────────────────────────────────────────────
-const DIM_COLOUR = 0x444466;   // cool blue-grey
-
 function applyDeckDim() {
     wallLayer.forEachTile(tile => {
         const isLight = tile.properties && tile.properties.light;
@@ -1942,7 +1819,6 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range
 // Because erasures stack, the innermost area is erased three times
 // (brightest), the middle ring twice, and the outer ring only once
 // (dimmest) — giving the stepped falloff shown in the design sketch.
-const LIGHT_BAND_ERASE_ALPHA = 0.35;   // tune for contrast between bands
 
 function updateFogOfWar() {
     if (!fogRT) { return; }
