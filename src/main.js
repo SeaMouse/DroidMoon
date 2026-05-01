@@ -10,6 +10,7 @@ import {
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
+import { state, resetGameState } from './state.js';
 
 // ─────────────────────────────────────────────
 //  SCENE: TITLE
@@ -110,13 +111,13 @@ class DeckSelectScene extends Phaser.Scene {
                       }).setOrigin(0.5).setScrollFactor(0);
 
                       const connectedDecks = this.lift.decks;
-                      const allOptions     = [currentDeck, ...connectedDecks.filter(d => d !== currentDeck)];
+                      const allOptions     = [state.currentDeck, ...connectedDecks.filter(d => d !== state.currentDeck)];
 
                       let yPos = 220;
                       for (const deckName of allOptions) {
                           const def    = deckDefinitions[deckName];
                           const label  = def ? def.label : deckName;
-                          const suffix = (deckName === currentDeck) ? '  (current deck)' : '';
+                          const suffix = (deckName === state.currentDeck) ? '  (current deck)' : '';
 
                           const txt = this.add.text(400, yPos, label + suffix, {
                               fontFamily: 'monospace', fontSize: '20px', fill: '#aaaacc'
@@ -139,7 +140,7 @@ class DeckSelectScene extends Phaser.Scene {
         for (let i = 0; i < this.items.length; i++) {
             const item = this.items[i];
             const label = deckDefinitions[item.deckName]?.label || item.deckName;
-            const suffix = (item.deckName === currentDeck) ? '  (current deck)' : '';
+            const suffix = (item.deckName === state.currentDeck) ? '  (current deck)' : '';
             if (i === index) {
                 item.text.setStyle({ fill: '#ffffff', fontSize: '22px' });
                 item.text.setText('▸ ' + label + suffix);
@@ -198,7 +199,7 @@ class DeckSelectScene extends Phaser.Scene {
 
     confirm() {
         const selected = this.items[this.index];
-        if (!selected || selected.deckName === currentDeck) {
+        if (!selected || selected.deckName === state.currentDeck) {
             this.cancel();
             return;
         }
@@ -250,7 +251,7 @@ const endScene = {
                                fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
                            }).setOrigin(0.5);
 
-                           this.add.text(400, 340, 'Droids destroyed: ' + killCount, {
+                           this.add.text(400, 340, 'Droids destroyed: ' + state.killCount, {
                                fontFamily: 'monospace', fontSize: '14px', fill: '#aaaacc'
                            }).setOrigin(0.5);
 
@@ -306,8 +307,6 @@ const config = {
 
 const game = new Phaser.Game(config);
 
-let keys;
-
 const Debug = {
     nav:        null,   // dynamic enemy-target lines (was debugGraphics)
     navStatic:  null,   // static nav graph (was scene.debugStaticGfx)
@@ -316,55 +315,6 @@ const Debug = {
     vis:        null,   // visibility polygon (was scene.debugVisGfx)
     nodeLabels: [],     // (was scene.debugNodeLabels)
 };
-
-let player;
-let wallLayer;
-let enemies = [];
-let navNodes = [];  // [{id, x, y, neighbours:[ids]}]
-
-let wallSegments = [];   // [{x1, y1, x2, y2}] — exposed wall edges for raycasting
-let wallCorners = [];
-let fogRT;
-let playerFacing = 0;   // angle in radians (0 = right, PI/2 = down)
-
-let playerBullets;    // BulletPool instance
-let enemyBullets;     // BulletPool instance
-let enemyGroup;
-let rightStickReset = true;
-let scene;
-
-// --- HUD ---
-let energyBarFill;
-let killText;
-let killCount = 0;
-let deckLabel;   // shows current deck name on HUD
-
-// --- Player energy ---
-let playerEnergy;
-let playerInvincible    = false;
-
-// --- Game state ---
-let gameOver = false;
-let gameOverText;
-let restartText;
-
-let lastShotTime = 0;
-
-// ─────────────────────────────────────────────
-//  MULTI-DECK SYSTEM
-// ─────────────────────────────────────────────
-// currentDeck  – which deck is active right now
-// deckStates   – saved enemy snapshots, keyed by deck name
-// playerSpawnPos – where to place the player on the next create()
-//
-// These three variables live outside the scene so they survive
-// scene.restart() calls.
-// ─────────────────────────────────────────────
-
-let currentDeck    = 'deck1';           // starting deck
-let deckStates     = {};                // persisted between deck switches
-let playerSpawnPos = null;              // set before switching; null = use default
-let lastDeck       = null;    // which deck we arrived FROM via lift (null = fresh start)
 
 
 // ─────────────────────────────────────────────
@@ -391,7 +341,7 @@ class BulletPool {
         this.defaultSpeed  = opts.defaultSpeed;
         this.defaultDamage = opts.defaultDamage;
 
-        this.group = scene.physics.add.group({
+        this.group = state.scene.physics.add.group({
             defaultKey: this.textureKey,
                 maxSize:    opts.maxSize ?? 30,
         });
@@ -435,19 +385,19 @@ class Enemy {
         }
 
         // --- Sprite setup ---
-        const sprite = scene.physics.add.sprite(x, y, typeName);
+        const sprite = state.scene.physics.add.sprite(x, y, typeName);
         sprite.setAlpha(0);
         sprite.setCollideWorldBounds(true);
-        scene.physics.add.collider(sprite, wallLayer);
-        enemyGroup.add(sprite);
+        state.scene.physics.add.collider(sprite, state.wallLayer);
+        state.enemyGroup.add(sprite);
         sprite.setData('entity', this);
 
         // --- Nav state ---
         // If a node id was passed in (restored from save), trust it.
         // Otherwise pick the nearest node to our spawn position.
         let nodeId, target;
-        if (opts.currentNodeId !== undefined && navNodes[opts.currentNodeId]) {
-            const n = navNodes[opts.currentNodeId];
+        if (opts.currentNodeId !== undefined && state.navNodes[opts.currentNodeId]) {
+            const n = state.navNodes[opts.currentNodeId];
             nodeId = n.id;
             target = { x: n.x, y: n.y };
         } else {
@@ -480,8 +430,8 @@ class Enemy {
     update(time) {
         const sprite = this.sprite;
 
-        const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
-        const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
+        const los          = hasLineOfSight(state.player.x, state.player.y, sprite.x, sprite.y);
+        const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, state.player.x, state.player.y);
         const targetAlpha  = los ? 1 : 0;
         sprite.alpha += (targetAlpha - sprite.alpha) * 0.10;
         if (sprite.alpha < 0.01) { sprite.alpha = 0; }
@@ -506,7 +456,7 @@ class Enemy {
             );
             if (movedDist < 8) {
                 if (this.previousNodeId !== null) {
-                    const prevNode = navNodes[this.previousNodeId];
+                    const prevNode = state.navNodes[this.previousNodeId];
                     this.currentNodeId  = this.previousNodeId;
                     this.previousNodeId = null;
                     this.nodeTarget     = { x: prevNode.x, y: prevNode.y };
@@ -532,7 +482,7 @@ class Enemy {
 
             if (this.weaponType !== null) {
                 if (los && distToPlayer < this.detectRange) {
-                    const playerNode = findNearestNode(player.x, player.y);
+                    const playerNode = findNearestNode(state.player.x, state.player.y);
                     if (playerNode) {
                         const path = bfsPath(this.currentNodeId, playerNode.id);
                         if (path && path.length > 0) {
@@ -549,7 +499,7 @@ class Enemy {
             if (nextId !== null) {
                 this.previousNodeId = this.currentNodeId;
                 this.currentNodeId  = nextId;
-                this.nodeTarget     = { x: navNodes[nextId].x, y: navNodes[nextId].y };
+                this.nodeTarget     = { x: state.navNodes[nextId].x, y: state.navNodes[nextId].y };
             }
         }
 
@@ -597,30 +547,30 @@ function preload() {
 //  CREATE
 // ─────────────────────────────────────────────
 function create() {
-    scene = this;
-    gameOver = false;
-    playerEnergy    = (playerEnergy > 0) ? playerEnergy : PLAYER_MAX_ENERGY;
-    playerFacing = 0;
-    enemies         = [];
-    playerInvincible = false;
-    lastShotTime     = 0;
-    rightStickReset  = true;
+    state.scene = this;
+    state.gameOver = false;
+    state.playerEnergy    = (state.playerEnergy > 0) ? state.playerEnergy : PLAYER_MAX_ENERGY;
+    state.playerFacing = 0;
+    state.enemies         = [];
+    state.playerInvincible = false;
+    state.lastShotTime     = 0;
+    state.rightStickReset  = true;
     Lifts.zones      = [];
     Lifts.playerOn   = null;
     Lifts.holdStart  = 0;
     Lifts.inputGated = false;
 
-    const deckDef = deckDefinitions[currentDeck];
+    const deckDef = deckDefinitions[state.currentDeck];
     if (!deckDef) {
-        console.error('No deck definition for "' + currentDeck + '"');
+        console.error('No deck definition for "' + state.currentDeck + '"');
         return;
     }
 
     // --- Tilemap ---
     const map      = this.make.tilemap({ key: deckDef.mapKey });
     const tileset  = map.addTilesetImage('tiles', 'tiles');
-    wallLayer      = map.createLayer('Tile Layer 1', tileset, 0, 0);
-    wallLayer.setCollision(1);
+    state.wallLayer      = map.createLayer('Tile Layer 1', tileset, 0, 0);
+    state.wallLayer.setCollision(1);
     buildNavGraph(map);
     extractWallSegments();
     extractWallCorners();
@@ -635,13 +585,13 @@ function create() {
     }
 
     // --- Player spawn position ---
-    const spawnX = playerSpawnPos ? playerSpawnPos.x : deckDef.playerStart.x;
-    const spawnY = playerSpawnPos ? playerSpawnPos.y : deckDef.playerStart.y;
-    playerSpawnPos = null;   // consumed — reset for next time
+    const spawnX = state.playerSpawnPos ? state.playerSpawnPos.x : deckDef.playerStart.x;
+    const spawnY = state.playerSpawnPos ? state.playerSpawnPos.y : deckDef.playerStart.y;
+    state.playerSpawnPos = null;   // consumed — reset for next time
 
-    player = this.physics.add.sprite(spawnX, spawnY, 'player');
-    player.setCollideWorldBounds(true);
-    this.physics.add.collider(player, wallLayer);
+    state.player = this.physics.add.sprite(spawnX, spawnY, 'player');
+    state.player.setCollideWorldBounds(true);
+    this.physics.add.collider(state.player, state.wallLayer);
 
     // --- Player bullet texture ---
     if (!this.textures.exists('bullet')) {
@@ -653,14 +603,14 @@ function create() {
     }
 
     // --- Player bullet pool ---
-    playerBullets = new BulletPool(this, {
+    state.playerBullets = new BulletPool(this, {
         textureKey:    'bullet',
         defaultSpeed:  BULLET_SPEED,
             defaultDamage: 1,           // player bullets do 1 hp damage to enemies
                 maxSize:       20,
     });
-    this.physics.add.collider(playerBullets.group, wallLayer, (bullet) => {
-        playerBullets.deactivate(bullet);
+    this.physics.add.collider(state.playerBullets.group, state.wallLayer, (bullet) => {
+        state.playerBullets.deactivate(bullet);
     });
 
     // --- Enemy bullet textures ---
@@ -678,16 +628,16 @@ function create() {
     // --- Enemy bullet pool ---
     // We pick blaster as the pool's default texture; per-shot overrides
     // supply heavy_blaster textures when needed.
-    enemyBullets = new BulletPool(this, {
+    state.enemyBullets = new BulletPool(this, {
         textureKey:    'ebullet_blaster',
         defaultSpeed:  weaponTypes.blaster.bulletSpeed,
             defaultDamage: weaponTypes.blaster.damage,
                 maxSize:       60,
     });
-    this.physics.add.collider(enemyBullets.group, wallLayer, (bullet) => {
-        enemyBullets.deactivate(bullet);
+    this.physics.add.collider(state.enemyBullets.group, state.wallLayer, (bullet) => {
+        state.enemyBullets.deactivate(bullet);
     });
-    this.physics.add.overlap(player, enemyBullets.group, playerHitByEnemyBullet);
+    this.physics.add.overlap(state.player, state.enemyBullets.group, playerHitByEnemyBullet);
 
     // --- Enemy sprite textures ---
     for (const [typeKey, typeDef] of Object.entries(enemyTypes)) {
@@ -701,33 +651,33 @@ function create() {
     }
 
     // --- Enemy group ---
-    enemyGroup = this.physics.add.group();
+    state.enemyGroup = this.physics.add.group();
 
     // --- Spawn enemies (fresh or restored) ---
-    spawnEnemiesForDeck(currentDeck);
+    spawnEnemiesForDeck(state.currentDeck);
 
     // --- Player-enemy collisions ---
-    this.physics.add.collider(player, enemyGroup, onPlayerEnemyCollide);
-    this.physics.add.collider(enemyGroup, enemyGroup, onEnemyEnemyCollide);
-    this.physics.add.overlap(playerBullets.group, enemyGroup, bulletHitEnemy);
+    this.physics.add.collider(state.player, state.enemyGroup, onPlayerEnemyCollide);
+    this.physics.add.collider(state.enemyGroup, state.enemyGroup, onEnemyEnemyCollide);
+    this.physics.add.overlap(state.playerBullets.group, state.enemyGroup, bulletHitEnemy);
 
     // --- Lift zones ---
     Lifts.zoneGroup = this.physics.add.staticGroup();
     parseLiftZones(map);
     // --- Arrival: if we came from another deck via lift, snap to the matching lift ---
-    if (lastDeck) {
-        const arrivalLift = Lifts.zones.find(lift => lift.decks.includes(lastDeck));
+    if (state.lastDeck) {
+        const arrivalLift = Lifts.zones.find(lift => lift.decks.includes(state.lastDeck));
         if (arrivalLift) {
-            player.setPosition(arrivalLift.x, arrivalLift.y);
+            state.player.setPosition(arrivalLift.x, arrivalLift.y);
             Lifts.inputGated = true;   // don't re-trigger the lift menu we just closed
-            console.log('LIFTS: Arrived on ' + currentDeck +
-            ' at lift connecting to ' + lastDeck + '.');
+            console.log('LIFTS: Arrived on ' + state.currentDeck +
+            ' at lift connecting to ' + state.lastDeck + '.');
         } else {
-            console.warn('LIFTS: No lift on ' + currentDeck +
-            ' connects back to ' + lastDeck +
+            console.warn('LIFTS: No lift on ' + state.currentDeck +
+            ' connects back to ' + state.lastDeck +
             ' — falling back to default spawn. Check the "Decks" property on your lifts.');
         }
-        lastDeck = null;
+        state.lastDeck = null;
     }
 
     // --- Lift progress bar (hidden until needed) ---
@@ -741,18 +691,18 @@ function create() {
     const mapHeight = map.heightInPixels;
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
     this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
-    this.cameras.main.startFollow(player, true, 0.08, 0.08);
+    this.cameras.main.startFollow(state.player, true, 0.08, 0.08);
 
     // --- HUD ---
     createHUD(this);
 
     // --- Dark overlay when Deck is shut down ---
-    fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
-    fogRT.setDepth(40);          // above gameplay, below HUD (HUD is depth 10-20)
-    fogRT.setOrigin(0, 0);       // top-left, so world coords map directly
+    state.fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
+    state.fogRT.setDepth(40);          // above gameplay, below HUD (HUD is depth 10-20)
+    state.fogRT.setOrigin(0, 0);       // top-left, so world coords map directly
 
     // --- Cached keyboard keys (one place, populated once per scene) ---
-    keys = this.input.keyboard.addKeys({
+    state.keys = this.input.keyboard.addKeys({
         f:     'F',
         up:    'UP',
         down:  'DOWN',
@@ -769,14 +719,14 @@ function create() {
     Debug.nav.setDepth(50);
     drawDebugNavStatic();
     drawDebugWallSegments();
-    Debug.rays = scene.add.graphics();
+    Debug.rays = state.scene.add.graphics();
     Debug.rays.setDepth(48);
     Debug.rays.setVisible(false);
-    Debug.vis = scene.add.graphics();
+    Debug.vis = state.scene.add.graphics();
     Debug.vis.setDepth(47);
     Debug.vis.setVisible(false);
     // --- Re-apply shutdown dim if this deck was already cleared ---
-    if (deckStates[currentDeck] && deckStates[currentDeck].cleared) {
+    if (state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared) {
         applyDeckDim();
     }
 }
@@ -785,9 +735,9 @@ function create() {
 //  UPDATE  (called every frame)
 // ─────────────────────────────────────────────
 function update(time) {
-    if (gameOver) { return; }
+    if (state.gameOver) { return; }
 
-    player.setVelocity(0);
+    state.player.setVelocity(0);
 
     // --- Player movement ---
     const cursors = this.input.keyboard.createCursorKeys();
@@ -795,8 +745,8 @@ function update(time) {
     const DEAD_ZONE = 0.15;
 
     if (pad) {
-        if (Math.abs(pad.leftStick.x) > DEAD_ZONE) { player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
-        if (Math.abs(pad.leftStick.y) > DEAD_ZONE) { player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
+        if (Math.abs(pad.leftStick.x) > DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
+        if (Math.abs(pad.leftStick.y) > DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
     }
 
     // --- Player aiming and shooting ---
@@ -810,25 +760,25 @@ function update(time) {
 
     // Update facing — right stick wins, movement is fallback, otherwise keep last
     if (rsOut) {
-        playerFacing = Math.atan2(rsy, rsx);
+        state.playerFacing = Math.atan2(rsy, rsx);
     } else if (lsOut) {
-        playerFacing = Math.atan2(pad.leftStick.y, pad.leftStick.x);
+        state.playerFacing = Math.atan2(pad.leftStick.y, pad.leftStick.x);
     }
 
     // Firing logic — only when the deck still has power
     if (!isDeckCleared()) {
         let aimX = 0, aimY = 0;
         if (!rsOut) {
-            rightStickReset = true;
-        } else if (rightStickReset) {
+            state.rightStickReset = true;
+        } else if (state.rightStickReset) {
             aimX = rsx;
             aimY = rsy;
         }
 
-        if ((aimX !== 0 || aimY !== 0) && time > lastShotTime + BULLET_COOLDOWN) {
-            fireBullet(player.x, player.y, aimX, aimY);
-            lastShotTime = time;
-            rightStickReset = false;
+        if ((aimX !== 0 || aimY !== 0) && time > state.lastShotTime + BULLET_COOLDOWN) {
+            fireBullet(state.player.x, state.player.y, aimX, aimY);
+            state.lastShotTime = time;
+            state.rightStickReset = false;
         }
     }
 
@@ -836,24 +786,24 @@ function update(time) {
     updateLiftHold(time, pad);
 
     // --- Enemy AI ---
-    for (const enemy of enemies) {
+    for (const enemy of state.enemies) {
         enemy.update(time);
     }
 
     // --- Debug toggle ---
-    if (Phaser.Input.Keyboard.JustDown(keys.f1)) {
+    if (Phaser.Input.Keyboard.JustDown(state.keys.f1)) {
         const visible = !Debug.nav.visible;
         Debug.nav.setVisible(visible);
         Debug.navStatic.setVisible(visible);
         Debug.nodeLabels.forEach(label => label.setVisible(visible));
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.f2)) {
+    if (Phaser.Input.Keyboard.JustDown(state.keys.f2)) {
         Debug.walls.setVisible(!Debug.walls.visible);
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.f3)) {
+    if (Phaser.Input.Keyboard.JustDown(state.keys.f3)) {
         Debug.rays.setVisible(!Debug.rays.visible);
     }
-    if (Phaser.Input.Keyboard.JustDown(keys.f4)) {
+    if (Phaser.Input.Keyboard.JustDown(state.keys.f4)) {
         Debug.vis.setVisible(!Debug.vis.visible);
     }
     if (Debug.vis.visible) {
@@ -906,18 +856,18 @@ function parseLiftZones(map) {
         const cx = obj.x + w / 2;
         const cy = obj.y + h / 2;
 
-        const zone = scene.add.zone(cx, cy, w, h);
-        scene.physics.add.existing(zone, true);  // true = static body
+        const zone = state.scene.add.zone(cx, cy, w, h);
+        state.scene.physics.add.existing(zone, true);  // true = static body
         Lifts.zoneGroup.add(zone);
 
         // Draw a subtle visual indicator so the player knows a lift is here
-        const indicator = scene.add.graphics();
+        const indicator = state.scene.add.graphics();
         indicator.lineStyle(2, 0x44aaff, 0.6);
         indicator.strokeRect(obj.x, obj.y, w, h);
         indicator.fillStyle(0x44aaff, 0.15);
         indicator.fillRect(obj.x, obj.y, w, h);
 
-        const liftLabel = scene.add.text(cx, obj.y - 8, 'LIFT', {
+        const liftLabel = state.scene.add.text(cx, obj.y - 8, 'LIFT', {
             fontFamily: 'monospace', fontSize: '8px', fill: '#44aaff'
         }).setOrigin(0.5, 1);
 
@@ -930,12 +880,12 @@ function parseLiftZones(map) {
         Lifts.zones.push(liftData);
     }
 
-    console.log('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + currentDeck + '.');
+    console.log('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + state.currentDeck + '.');
 }
 
 // Checks player overlap against all lift zones directly (no callback timing issues)
 function findPlayerLiftOverlap() {
-    const pb = player.getBounds();
+    const pb = state.player.getBounds();
     for (const lift of Lifts.zones) {
         const zb = lift.zone.getBounds();
         if (Phaser.Geom.Intersects.RectangleToRectangle(pb, zb)) {
@@ -958,7 +908,7 @@ function updateLiftHold(time, pad) {
         holdInput = (Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE);
     }
 
-    if (keys.f.isDown) { holdInput = true; }
+    if (state.keys.f.isDown) { holdInput = true; }
 
     // If we just arrived via lift, wait for the player to release the stick
     // before we start counting a new hold.
@@ -1013,8 +963,8 @@ function updateLiftHold(time, pad) {
 //  DECK SELECTION SCREEN
 // ─────────────────────────────────────────────
 function showDeckSelection(liftData) {
-    scene.scene.pause();
-    scene.scene.launch('DeckSelectScene', { lift: liftData });
+    state.scene.scene.pause();
+    state.scene.scene.launch('DeckSelectScene', { lift: liftData });
 }
 
 
@@ -1022,21 +972,21 @@ function showDeckSelection(liftData) {
 //  DECK SWITCHING
 // ─────────────────────────────────────────────
 function switchToDeck(targetDeck) {
-    saveDeckState(currentDeck);
-    lastDeck       = currentDeck;   // remember source so create() can snap to a matching lift
-    playerSpawnPos = null;
-    currentDeck    = targetDeck;
-    scene.scene.restart();
+    saveDeckState(state.currentDeck);
+    state.lastDeck       = state.currentDeck;   // remember source so create() can snap to a matching lift
+    state.playerSpawnPos = null;
+    state.currentDeck    = targetDeck;
+    state.scene.scene.restart();
 }
 
 // ─────────────────────────────────────────────
 //  DECK STATE — save / restore
 // ─────────────────────────────────────────────
 function saveDeckState(deckName) {
-    const saved = enemies.map(e => e.serialise());
+    const saved = state.enemies.map(e => e.serialise());
 
-    const wasCleared = deckStates[deckName] && deckStates[deckName].cleared;
-    deckStates[deckName] = {
+    const wasCleared = state.deckStates[deckName] && state.deckStates[deckName].cleared;
+    state.deckStates[deckName] = {
         enemies: saved,
         cleared: wasCleared || false,
     };
@@ -1048,7 +998,7 @@ function restoreEnemiesFromState(state) {
     for (const saved of state.enemies) {
         if (!enemyTypes[saved.typeName]) { continue; }
 
-        enemies.push(new Enemy(scene, saved.typeName, saved.x, saved.y, {
+        state.enemies.push(new Enemy(state.scene, saved.typeName, saved.x, saved.y, {
             hp:             saved.hp,
             currentNodeId:  saved.currentNodeId,
             previousNodeId: saved.previousNodeId,
@@ -1066,15 +1016,15 @@ function spawnFreshEnemies(enemyDefs) {
         const x = def.startTile.x * TILE_SIZE + TILE_SIZE / 2;
         const y = def.startTile.y * TILE_SIZE + TILE_SIZE / 2;
 
-        enemies.push(new Enemy(scene, def.type, x, y));
+        state.enemies.push(new Enemy(state.scene, def.type, x, y));
     }
 }
 
 // Decides whether to restore saved state or spawn fresh
 function spawnEnemiesForDeck(deckName) {
-    if (deckStates[deckName]) {
+    if (state.deckStates[deckName]) {
         console.log('STATE: Restoring saved enemies for ' + deckName + '.');
-        restoreEnemiesFromState(deckStates[deckName]);
+        restoreEnemiesFromState(state.deckStates[deckName]);
     } else {
         const deckDef = deckDefinitions[deckName];
         console.log('STATE: Spawning ' + deckDef.enemies.length + ' fresh enemy(s) for ' + deckName + '.');
@@ -1089,30 +1039,30 @@ function createHUD(scene) {
     const BAR_X = 12;
     const BAR_Y = 12;
 
-    scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
+    state.scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
         fontFamily: 'monospace',
         fontSize:   '10px',
         fill:       '#aaffcc'
     }).setScrollFactor(0).setDepth(50);
 
-    const barBg = scene.add.graphics();
+    const barBg = state.scene.add.graphics();
     barBg.fillStyle(0x222233, 1);
     barBg.fillRect(BAR_X, BAR_Y + 12, ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT);
     barBg.setScrollFactor(0).setDepth(50);
 
-    energyBarFill = scene.add.graphics();
-    energyBarFill.setScrollFactor(0).setDepth(51);
+    state.energyBarFill = state.scene.add.graphics();
+    state.energyBarFill.setScrollFactor(0).setDepth(51);
 
-    killText = scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
+    state.killText = state.scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
         fontFamily: 'monospace',
         fontSize:   '12px',
         fill:       '#aaffcc'
     });
-    killText.setScrollFactor(0).setDepth(50);
+    state.killText.setScrollFactor(0).setDepth(50);
 
     // Deck name label
-    const deckDef = deckDefinitions[currentDeck];
-    deckLabel = scene.add.text(800 - 12, 12, deckDef ? deckDef.label : currentDeck, {
+    const deckDef = deckDefinitions[state.currentDeck];
+    state.deckLabel = state.scene.add.text(800 - 12, 12, deckDef ? deckDef.label : state.currentDeck, {
         fontFamily: 'monospace',
         fontSize:   '11px',
         fill:       '#44aaff',
@@ -1123,18 +1073,18 @@ function createHUD(scene) {
 }
 
 function updateHUD() {
-    const pct = playerEnergy / PLAYER_MAX_ENERGY;
+    const pct = state.playerEnergy / PLAYER_MAX_ENERGY;
 
     let colour;
     if      (pct > 0.5) { colour = 0x00dd55; }
     else if (pct > 0.25){ colour = 0xffcc00; }
     else                { colour = 0xff2244; }
 
-    energyBarFill.clear();
-    energyBarFill.fillStyle(colour, 1);
-    energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
+    state.energyBarFill.clear();
+    state.energyBarFill.fillStyle(colour, 1);
+    state.energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
 
-    killText.setText('Destroyed: ' + killCount);
+    state.killText.setText('Destroyed: ' + state.killCount);
 }
 
 // ─────────────────────────────────────────────
@@ -1144,7 +1094,7 @@ function onPlayerEnemyCollide(playerSprite, enemySprite) {
     const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
 
-    const wasInvincible = playerInvincible;
+    const wasInvincible = state.playerInvincible;
     applyDamageToPlayer(enemy.contactDamage);
 
     if (!wasInvincible) {
@@ -1171,7 +1121,7 @@ function onPlayerEnemyCollide(playerSprite, enemySprite) {
                 ny * pushFactor * MAX_PUSH
             );
 
-            enemy.knockbackUntil = scene.time.now + 150;
+            enemy.knockbackUntil = state.scene.time.now + 150;
             reverseEnemyCourse(enemy);
         }
     }
@@ -1185,7 +1135,7 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
     const enemyB = spriteB.getData('entity');
     if (!enemyA || !enemyB) { return; }
 
-    const now = scene.time.now;
+    const now = state.scene.time.now;
     if (now < enemyA.bounceCooldown || now < enemyB.bounceCooldown) { return; }
 
     const wA    = enemyTypes[enemyA.typeName].weight;
@@ -1218,7 +1168,7 @@ function onEnemyEnemyCollide(spriteA, spriteB) {
 // ─────────────────────────────────────────────
 function playerHitByEnemyBullet(playerSprite, bullet) {
     const damage = bullet.getData('damage') ?? 20;
-    enemyBullets.deactivate(bullet);
+    state.enemyBullets.deactivate(bullet);
     applyDamageToPlayer(damage);
 }
 
@@ -1226,29 +1176,29 @@ function playerHitByEnemyBullet(playerSprite, bullet) {
 //  PLAYER DAMAGE — shared logic
 // ─────────────────────────────────────────────
 function applyDamageToPlayer(damage) {
-    if (playerInvincible) { return; }
+    if (state.playerInvincible) { return; }
 
-    playerEnergy = Math.max(0, playerEnergy - damage);
+    state.playerEnergy = Math.max(0, state.playerEnergy - damage);
     updateHUD();
 
-    if (playerEnergy <= 0) {
+    if (state.playerEnergy <= 0) {
         triggerGameOver();
         return;
     }
 
-    playerInvincible = true;
+    state.playerInvincible = true;
 
-    scene.tweens.add({
-        targets:    player,
+    state.scene.tweens.add({
+        targets:    state.player,
         alpha:      0.2,
         duration:   100,
         yoyo:       true,
         repeat:     5,
-        onComplete: () => { player.setAlpha(1); }
+        onComplete: () => { state.player.setAlpha(1); }
     });
 
-    scene.time.delayedCall(INVINCIBILITY_MS, () => {
-        playerInvincible = false;
+    state.scene.time.delayedCall(INVINCIBILITY_MS, () => {
+        state.playerInvincible = false;
     });
 }
 
@@ -1256,14 +1206,14 @@ function applyDamageToPlayer(damage) {
 //  GAME OVER
 // ─────────────────────────────────────────────
 function triggerGameOver() {
-    gameOver = true;
-    player.setVelocity(0);
-    player.setAlpha(0.3);
+    state.gameOver = true;
+    state.player.setVelocity(0);
+    state.player.setAlpha(0.3);
 
-    for (const enemy of enemies) { enemy.sprite.setVelocity(0); }
+    for (const enemy of state.enemies) { enemy.sprite.setVelocity(0); }
 
-    scene.time.delayedCall(1200, () => {
-        scene.scene.start('EndScene', { result: 'lost' });
+    state.scene.time.delayedCall(1200, () => {
+        state.scene.scene.start('EndScene', { result: 'lost' });
     });
 }
 
@@ -1271,12 +1221,12 @@ function triggerGameOver() {
 //  PLAYER BULLETS
 // ─────────────────────────────────────────────
 function fireBullet(x, y, dx, dy) {
-    playerBullets.fire(x, y, dx, dy);
+    state.playerBullets.fire(x, y, dx, dy);
 }
 
 function bulletHitEnemy(bullet, enemySprite) {
     const damage = bullet.getData('damage') ?? 1;
-    playerBullets.deactivate(bullet);
+    state.playerBullets.deactivate(bullet);
 
     const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
@@ -1284,21 +1234,21 @@ function bulletHitEnemy(bullet, enemySprite) {
     enemy.hp--;
 
     if (enemy.hp <= 0) {
-        enemies = enemies.filter(e => e !== enemy);
+        state.enemies = state.enemies.filter(e => e !== enemy);
 
         enemySprite.setActive(false);
         enemySprite.setVisible(false);
         enemySprite.body.enable = false;
 
-        killCount++;
+        state.killCount++;
         updateHUD();
 
-        scene.time.delayedCall(100, () => {
+        state.scene.time.delayedCall(100, () => {
             enemySprite.destroy();
         });
         checkDeckClearance();
     } else {
-        scene.tweens.add({
+        state.scene.tweens.add({
             targets:  enemySprite,
             alpha:    0.3,
             duration: 60,
@@ -1317,10 +1267,10 @@ function enemyShoot(enemy, time) {
     if (time < enemy.lastShotTime + weaponDef.cooldown) { return; }
     enemy.lastShotTime = time;
 
-    const dx = player.x - enemy.sprite.x;
-    const dy = player.y - enemy.sprite.y;
+    const dx = state.player.x - enemy.sprite.x;
+    const dy = state.player.y - enemy.sprite.y;
 
-    enemyBullets.fire(enemy.sprite.x, enemy.sprite.y, dx, dy, {
+    state.enemyBullets.fire(enemy.sprite.x, enemy.sprite.y, dx, dy, {
         textureKey: 'ebullet_' + enemy.weaponType,
         speed:      weaponDef.bulletSpeed,
         damage:     weaponDef.damage,
@@ -1359,7 +1309,7 @@ function hasLineOfSight(x1, y1, x2, y2, width) {
             const t       = i / steps;
             const sampleX = x1 + ox + dx * t;
             const sampleY = y1 + oy + dy * t;
-            const tile    = wallLayer.getTileAtWorldXY(sampleX, sampleY);
+            const tile    = state.wallLayer.getTileAtWorldXY(sampleX, sampleY);
             if (tile && tile.collides) { return false; }
         }
     }
@@ -1370,7 +1320,7 @@ function hasLineOfSight(x1, y1, x2, y2, width) {
 //  NAV GRAPH — build from Tiled object layer
 // ─────────────────────────────────────────────
 function buildNavGraph(map) {
-    navNodes = [];
+    state.navNodes = [];
 
     console.log('NAV: All layers found by Phaser:');
     map.layers.forEach(l => console.log('  tile layer:', l.name));
@@ -1396,15 +1346,15 @@ function buildNavGraph(map) {
     }
 
     objLayer.objects.forEach((obj, index) => {
-        navNodes.push({ id: index, x: obj.x, y: obj.y, neighbours: [] });
+        state.navNodes.push({ id: index, x: obj.x, y: obj.y, neighbours: [] });
     });
 
-    console.log('NAV: Found ' + navNodes.length + ' waypoint objects.');
+    console.log('NAV: Found ' + state.navNodes.length + ' waypoint objects.');
 
-    for (let i = 0; i < navNodes.length; i++) {
-        for (let j = i + 1; j < navNodes.length; j++) {
-            const a    = navNodes[i];
-            const b    = navNodes[j];
+    for (let i = 0; i < state.navNodes.length; i++) {
+        for (let j = i + 1; j < state.navNodes.length; j++) {
+            const a    = state.navNodes[i];
+            const b    = state.navNodes[j];
             const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
             if (dist <= NODE_CONNECT_DIST && hasLineOfSight(a.x, a.y, b.x, b.y)) {
                 a.neighbours.push(b.id);
@@ -1413,10 +1363,10 @@ function buildNavGraph(map) {
         }
     }
 
-    const totalLinks = navNodes.reduce((sum, n) => sum + n.neighbours.length, 0) / 2;
-    console.log('NAV: Graph built — ' + navNodes.length + ' nodes, ' + totalLinks + ' connections.');
+    const totalLinks = state.navNodes.reduce((sum, n) => sum + n.neighbours.length, 0) / 2;
+    console.log('NAV: Graph built — ' + state.navNodes.length + ' nodes, ' + totalLinks + ' connections.');
 
-    if (totalLinks === 0 && navNodes.length > 1) {
+    if (totalLinks === 0 && state.navNodes.length > 1) {
         console.warn('NAV: No connections formed! Nodes may be more than ' + NODE_CONNECT_DIST + 'px apart, or walls are blocking LOS.');
     }
 }
@@ -1427,7 +1377,7 @@ function buildNavGraph(map) {
 function findNearestNode(x, y) {
     let best     = null;
     let bestDist = Infinity;
-    for (const node of navNodes) {
+    for (const node of state.navNodes) {
         const d = Phaser.Math.Distance.Between(x, y, node.x, node.y);
         if (d < bestDist) { bestDist = d; best = node; }
     }
@@ -1444,7 +1394,7 @@ function bfsPath(startId, goalId) {
         const path    = queue.shift();
         const current = path[path.length - 1];
 
-        for (const neighbourId of navNodes[current].neighbours) {
+        for (const neighbourId of state.navNodes[current].neighbours) {
             if (neighbourId === goalId) {
                 return [...path.slice(1), neighbourId];
             }
@@ -1459,7 +1409,7 @@ function bfsPath(startId, goalId) {
 
 function pickWanderNode(enemy) {
     if (enemy.currentNodeId === null) { return null; }
-    const node = navNodes[enemy.currentNodeId];
+    const node = state.navNodes[enemy.currentNodeId];
     if (!node || node.neighbours.length === 0) { return null; }
 
     let candidates = node.neighbours;
@@ -1476,7 +1426,7 @@ function pickWanderNode(enemy) {
 
 function reverseEnemyCourse(enemy) {
     if (enemy.previousNodeId !== null) {
-        const prevNode = navNodes[enemy.previousNodeId];
+        const prevNode = state.navNodes[enemy.previousNodeId];
         const oldCurrent = enemy.currentNodeId;
         enemy.currentNodeId  = enemy.previousNodeId;
         enemy.previousNodeId = oldCurrent;
@@ -1494,17 +1444,7 @@ function reverseEnemyCourse(enemy) {
 //  HELPER - is deck cleared?
 // ─────────────────────────────────────────────
 function isDeckCleared() {
-    return !!(deckStates[currentDeck] && deckStates[currentDeck].cleared);
-}
-
-function resetGameState() {
-    deckStates     = {};
-    currentDeck    = 'deck1';
-    playerSpawnPos = null;
-    lastDeck       = null;
-    Lifts.inputGated = false;
-    playerEnergy   = PLAYER_MAX_ENERGY;
-    killCount      = 0;
+    return !!(state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared);
 }
 
 function areAllDecksCleared() {
@@ -1512,7 +1452,7 @@ function areAllDecksCleared() {
         const def = deckDefinitions[deckName];
         // Decks with no enemies don't count — they can never be "cleared".
         if (!def.enemies || def.enemies.length === 0) { continue; }
-        if (!deckStates[deckName] || !deckStates[deckName].cleared) {
+        if (!state.deckStates[deckName] || !state.deckStates[deckName].cleared) {
             return false;
         }
     }
@@ -1523,7 +1463,7 @@ function areAllDecksCleared() {
 //  DECK SHUTDOWN — "lights out" when a deck is cleared
 // ─────────────────────────────────────────────
 function applyDeckDim() {
-    wallLayer.forEachTile(tile => {
+    state.wallLayer.forEachTile(tile => {
         const isLight = tile.properties && tile.properties.light;
         tile.tint = isLight ? 0xffffff : DIM_COLOUR;
     });
@@ -1531,45 +1471,45 @@ function applyDeckDim() {
 
 function checkDeckClearance() {
     // Already shut down? Nothing to do.
-    if (deckStates[currentDeck] && deckStates[currentDeck].cleared) { return; }
+    if (state.deckStates[state.currentDeck] && state.deckStates[state.currentDeck].cleared) { return; }
 
     // Still enemies alive? Nothing to do.
-    if (enemies.length > 0) { return; }
+    if (state.enemies.length > 0) { return; }
 
     // Did this deck originally have enemies? If it started empty, don't trigger.
-    const deckDef = deckDefinitions[currentDeck];
+    const deckDef = deckDefinitions[state.currentDeck];
     if (!deckDef || !deckDef.enemies || deckDef.enemies.length === 0) { return; }
 
     triggerDeckShutdown();
 
     // Was that the last deck with enemies on it?
     if (areAllDecksCleared()) {
-        scene.time.delayedCall(2500, () => {
-            scene.scene.start('EndScene', { result: 'won' });
+        state.scene.time.delayedCall(2500, () => {
+            state.scene.scene.start('EndScene', { result: 'won' });
         });
     }
 }
 
 function triggerDeckShutdown() {
     // Persist the cleared flag so it survives lifts, saves and restores.
-    if (!deckStates[currentDeck]) {
-        deckStates[currentDeck] = { enemies: [] };
+    if (!state.deckStates[state.currentDeck]) {
+        state.deckStates[state.currentDeck] = { enemies: [] };
     }
-    deckStates[currentDeck].cleared = true;
+    state.deckStates[state.currentDeck].cleared = true;
 
     applyDeckDim();
     showDeckClearedMessage();
 
-    console.log('SHUTDOWN: ' + currentDeck + ' cleared — lights out.');
+    console.log('SHUTDOWN: ' + state.currentDeck + ' cleared — lights out.');
 }
 
 function showDeckClearedMessage() {
-    const msg = scene.add.text(400, 260, 'DECK POWER DOWN', {
+    const msg = state.scene.add.text(400, 260, 'DECK POWER DOWN', {
         fontFamily: 'monospace', fontSize: '32px',
         fill: '#44aaff', stroke: '#000000', strokeThickness: 3
     }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
 
-    scene.tweens.add({
+    state.scene.tweens.add({
         targets:    msg,
         alpha:      1,
         duration:   500,
@@ -1591,13 +1531,13 @@ function isWallTile(layer, tx, ty) {
 }
 
 function extractWallSegments() {
-    wallSegments = [];
-    const W = wallLayer.width;   // map width  in tiles
-    const H = wallLayer.height;  // map height in tiles
+    state.wallSegments = [];
+    const W = state.wallLayer.width;   // map width  in tiles
+    const H = state.wallLayer.height;  // map height in tiles
 
     for (let ty = 0; ty < H; ty++) {
         for (let tx = 0; tx < W; tx++) {
-            if (!isWallTile(wallLayer, tx, ty)) { continue; }
+            if (!isWallTile(state.wallLayer, tx, ty)) { continue; }
 
             const left   = tx * TILE_SIZE;
             const top    = ty * TILE_SIZE;
@@ -1606,35 +1546,35 @@ function extractWallSegments() {
 
             // Only emit an edge if the neighbour on that side is NOT a wall.
             // This keeps the interior wall-to-wall seams out of the segment list.
-            if (!isWallTile(wallLayer, tx, ty - 1)) {
-                wallSegments.push({ x1: left,  y1: top,    x2: right, y2: top    });
+            if (!isWallTile(state.wallLayer, tx, ty - 1)) {
+                state.wallSegments.push({ x1: left,  y1: top,    x2: right, y2: top    });
             }
-            if (!isWallTile(wallLayer, tx + 1, ty)) {
-                wallSegments.push({ x1: right, y1: top,    x2: right, y2: bottom });
+            if (!isWallTile(state.wallLayer, tx + 1, ty)) {
+                state.wallSegments.push({ x1: right, y1: top,    x2: right, y2: bottom });
             }
-            if (!isWallTile(wallLayer, tx, ty + 1)) {
-                wallSegments.push({ x1: left,  y1: bottom, x2: right, y2: bottom });
+            if (!isWallTile(state.wallLayer, tx, ty + 1)) {
+               state.wallSegments.push({ x1: left,  y1: bottom, x2: right, y2: bottom });
             }
-            if (!isWallTile(wallLayer, tx - 1, ty)) {
-                wallSegments.push({ x1: left,  y1: top,    x2: left,  y2: bottom });
+            if (!isWallTile(state.wallLayer, tx - 1, ty)) {
+                state.wallSegments.push({ x1: left,  y1: top,    x2: left,  y2: bottom });
             }
         }
     }
 }
 
 function extractWallCorners() {
-    wallCorners = [];
-    const W = wallLayer.width;
-    const H = wallLayer.height;
+    state.wallCorners = [];
+    const W = state.wallLayer.width;
+    const H = state.wallLayer.height;
 
     // Grid vertices: one more in each dimension than there are tiles
     for (let vy = 0; vy <= H; vy++) {
         for (let vx = 0; vx <= W; vx++) {
             // The four tiles meeting at this vertex
-            const tl = isWallTile(wallLayer, vx - 1, vy - 1);
-            const tr = isWallTile(wallLayer, vx,     vy - 1);
-            const bl = isWallTile(wallLayer, vx - 1, vy);
-            const br = isWallTile(wallLayer, vx,     vy);
+            const tl = isWallTile(state.wallLayer, vx - 1, vy - 1);
+            const tr = isWallTile(state.wallLayer, vx,     vy - 1);
+            const bl = isWallTile(state.wallLayer, vx - 1, vy);
+            const br = isWallTile(state.wallLayer, vx,     vy);
 
             const count = (tl?1:0) + (tr?1:0) + (bl?1:0) + (br?1:0);
 
@@ -1648,7 +1588,7 @@ function extractWallCorners() {
             }
 
             // 1, 3, or diagonal-2 → real corner
-            wallCorners.push({ x: vx * TILE_SIZE, y: vy * TILE_SIZE });
+            state.wallCorners.push({ x: vx * TILE_SIZE, y: vy * TILE_SIZE });
         }
     }
 }
@@ -1668,7 +1608,7 @@ function castRay(originX, originY, angle) {
     let hitX = originX + rdx * 10000;
     let hitY = originY + rdy * 10000;
 
-    for (const seg of wallSegments) {
+    for (const seg of state.wallSegments) {
         const sdx = seg.x2 - seg.x1;
         const sdy = seg.y2 - seg.y1;
 
@@ -1709,7 +1649,7 @@ function computeVisibilityPolygon(originX, originY) {
     // Deduping saves a lot of rays.
     const seen    = new Set();
     const corners = [];
-    for (const seg of wallSegments) {
+    for (const seg of state.wallSegments) {
         const k1 = seg.x1 + ',' + seg.y1;
         if (!seen.has(k1)) { seen.add(k1); corners.push({ x: seg.x1, y: seg.y1 }); }
         const k2 = seg.x2 + ',' + seg.y2;
@@ -1784,7 +1724,7 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range
     }
 
     // Rays at corners that are (a) within range and (b) inside the cone
-    for (const c of wallCorners) {
+    for (const c of state.wallCorners) {
         const dx = c.x - originX;
         const dy = c.y - originY;
         if (dx * dx + dy * dy > RANGE_SQ) { continue; }   // out of range — skip
@@ -1821,17 +1761,17 @@ function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range
 // (dimmest) — giving the stepped falloff shown in the design sketch.
 
 function updateFogOfWar() {
-    if (!fogRT) { return; }
+    if (!state.fogRT) { return; }
 
     // Lights only out when the deck has been cleared
     if (!isDeckCleared()) {
-        fogRT.setVisible(false);
+        state.fogRT.setVisible(false);
         return;
     }
-    fogRT.setVisible(true);
+    state.fogRT.setVisible(true);
 
-    fogRT.clear();
-    fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
+    state.fogRT.clear();
+    state.fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
 
     // Outer → inner. Each pass erases a smaller cone on top of the
     // previous one, so alpha removal accumulates toward the centre.
@@ -1843,11 +1783,11 @@ function updateFogOfWar() {
 
     for (const range of ranges) {
         const poly = computeConeVisibilityPolygon(
-            player.x, player.y, playerFacing, CONE_HALF_ANGLE, range
+            state.player.x, state.player.y, state.playerFacing, CONE_HALF_ANGLE, range
         );
         if (poly.length < 3) { continue; }
 
-        const eraseGfx = scene.make.graphics({ x: 0, y: 0 }, false);
+        const eraseGfx = state.scene.make.graphics({ x: 0, y: 0 }, false);
         eraseGfx.fillStyle(0xffffff, LIGHT_BAND_ERASE_ALPHA);
         eraseGfx.beginPath();
         eraseGfx.moveTo(poly[0].x, poly[0].y);
@@ -1857,7 +1797,7 @@ function updateFogOfWar() {
         eraseGfx.closePath();
         eraseGfx.fillPath();
 
-        fogRT.erase(eraseGfx);
+        state.fogRT.erase(eraseGfx);
         eraseGfx.destroy();
     }
 }
@@ -1866,12 +1806,12 @@ function updateFogOfWar() {
 //  DEBUG — Draw wall boundaries for lights Raycasting
 // ─────────────────────────────────────────────
 function drawDebugWallSegments() {
-    const gfx = scene.add.graphics();
+    const gfx = state.scene.add.graphics();
     gfx.setDepth(49);
 
     // Segments — bright magenta so they stand out against any deck tint
     gfx.lineStyle(1.5, 0xff00ff, 0.9);
-    for (const seg of wallSegments) {
+    for (const seg of state.wallSegments) {
         gfx.beginPath();
         gfx.moveTo(seg.x1, seg.y1);
         gfx.lineTo(seg.x2, seg.y2);
@@ -1880,7 +1820,7 @@ function drawDebugWallSegments() {
 
     // Corner dots — only the real corners we cast rays at
     gfx.fillStyle(0xff8800, 1);
-    for (const c of wallCorners) {
+    for (const c of state.wallCorners) {
         gfx.fillCircle(c.x, c.y, 3);
     }
 
@@ -1898,9 +1838,9 @@ function drawDebugRays() {
     gfx.lineStyle(1, 0xffee00, 0.6);
     for (let i = 0; i < RAYS; i++) {
         const angle = (i / RAYS) * Math.PI * 2;
-        const hit   = castRay(player.x, player.y, angle);
+        const hit   = castRay(state.player.x, state.player.y, angle);
         gfx.beginPath();
-        gfx.moveTo(player.x, player.y);
+        gfx.moveTo(state.player.x, state.player.y);
         gfx.lineTo(hit.x, hit.y);
         gfx.strokePath();
     }
@@ -1912,7 +1852,7 @@ function drawDebugVisibilityPolygon() {
     const gfx = Debug.vis;
     gfx.clear();
 
-    const poly = computeVisibilityPolygon(player.x, player.y);
+    const poly = computeVisibilityPolygon(state.player.x, state.player.y);
     if (poly.length < 3) { return; }
 
     // Filled polygon — soft warm tint
@@ -1934,25 +1874,25 @@ function drawDebugVisibilityPolygon() {
 //  DEBUG — nav graph + enemy target lines
 // ─────────────────────────────────────────────
 function drawDebugNavStatic() {
-    const staticGfx = scene.add.graphics();
+    const staticGfx = state.scene.add.graphics();
     staticGfx.setDepth(50);
 
     Debug.nodeLabels = [];
 
     staticGfx.lineStyle(2, 0x00ff88, 0.85);
-    for (const node of navNodes) {
+    for (const node of state.navNodes) {
         for (const neighbourId of node.neighbours) {
             if (neighbourId > node.id) {
                 staticGfx.beginPath();
                 staticGfx.moveTo(node.x, node.y);
-                staticGfx.lineTo(navNodes[neighbourId].x, navNodes[neighbourId].y);
+                staticGfx.lineTo(state.navNodes[neighbourId].x, state.navNodes[neighbourId].y);
                 staticGfx.strokePath();
             }
         }
         staticGfx.fillStyle(0x00ccff, 0.85);
         staticGfx.fillCircle(node.x, node.y, 5);
 
-        const label = scene.add.text(node.x + 6, node.y - 6, String(node.id), {
+        const label = state.scene.add.text(node.x + 6, node.y - 6, String(node.id), {
             fontFamily: 'monospace',
             fontSize:   '9px',
             fill:       '#00ccff'
@@ -1967,7 +1907,7 @@ function drawDebugNavStatic() {
 function drawDebugNavDynamic() {
     if (!Debug.nav.visible) { return; }
     Debug.nav.clear();
-    for (const enemy of enemies) {
+    for (const enemy of state.enemies) {
         if (!enemy.nodeTarget) { continue; }
         Debug.nav.lineStyle(4, 0xffee00, 0.9);
         Debug.nav.beginPath();
