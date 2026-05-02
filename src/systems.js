@@ -439,6 +439,8 @@ export function updateFogOfWar() {
         LIGHT_MAX_RANGE * 1 / 3,
     ];
 
+    const eraseGfxList = [];
+
     for (const range of ranges) {
         const poly = computeConeVisibilityPolygon(
             state.player.x, state.player.y, state.playerFacing, CONE_HALF_ANGLE, range
@@ -456,7 +458,13 @@ export function updateFogOfWar() {
         eraseGfx.fillPath();
 
         state.fogRT.erase(eraseGfx);
-        eraseGfx.destroy();
+        eraseGfxList.push(eraseGfx);
+    }
+
+    state.fogRT.render();
+
+    for (const gfx of eraseGfxList) {
+        gfx.destroy();
     }
 }
 
