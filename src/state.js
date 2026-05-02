@@ -20,6 +20,7 @@ export const state = {
     playerBullets: null,
     enemyBullets:  null,
     fogRT:         null,
+    aimLaser:      null,
     keys:          null,
 
     // --- Game state ---
@@ -28,7 +29,6 @@ export const state = {
     playerInvincible: false,
     playerFacing:     0,
     lastShotTime:     0,
-    rightStickReset:  true,
     killCount:        0,
 
     // --- HUD references ---

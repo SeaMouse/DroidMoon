@@ -1111,6 +1111,52 @@ export function onEnemyEnemyCollide(spriteA, spriteB) {
 }
 
 // ─────────────────────────────────────────────
+//  AIM LASER
+// ─────────────────────────────────────────────
+export function drawAimLaser(rsOut, rsx, rsy) {
+    if (!state.aimLaser) { return; }
+    state.aimLaser.clear();
+
+    if (!rsOut || isDeckCleared()) { return; }
+
+    const angle         = Math.atan2(rsy, rsx);
+    const PLAYER_RADIUS = 16;
+    const MAX_RANGE     = 150;
+
+    // Start at the player's circumference, not the centre.
+    const startX = state.player.x + Math.cos(angle) * PLAYER_RADIUS;
+    const startY = state.player.y + Math.sin(angle) * PLAYER_RADIUS;
+
+    // Find where the beam should end: MAX_RANGE, or sooner if a wall blocks it.
+    const hit        = castRay(startX, startY, angle);
+    const distToWall = Phaser.Math.Distance.Between(startX, startY, hit.x, hit.y);
+    const drawLength = Math.min(MAX_RANGE, distToWall);
+
+    // Fade is anchored to MAX_RANGE so the gradient rate stays constant
+    // even when the beam is cut short by a wall.
+    const SEGMENTS = 20;
+    for (let i = 0; i < SEGMENTS; i++) {
+        const d1 = (i / SEGMENTS) * drawLength;
+        const d2 = ((i + 1) / SEGMENTS) * drawLength;
+        if (d1 >= drawLength) { break; }
+
+        const x1 = startX + Math.cos(angle) * d1;
+        const y1 = startY + Math.sin(angle) * d1;
+        const x2 = startX + Math.cos(angle) * d2;
+        const y2 = startY + Math.sin(angle) * d2;
+
+        // Alpha is based on absolute distance / MAX_RANGE, not segment index.
+        const alpha = (1 - d1 / MAX_RANGE) * 0.7;
+
+        state.aimLaser.lineStyle(2, 0xff4444, alpha);
+        state.aimLaser.beginPath();
+        state.aimLaser.moveTo(x1, y1);
+        state.aimLaser.lineTo(x2, y2);
+        state.aimLaser.strokePath();
+    }
+}
+
+// ─────────────────────────────────────────────
 //  DEBUG
 // ─────────────────────────────────────────────
 export const Debug = {

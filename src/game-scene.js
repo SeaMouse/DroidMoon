@@ -19,6 +19,7 @@ import {
     updateFogOfWar,
     drawDebugWallSegments, drawDebugRays, drawDebugVisibilityPolygon,
     drawDebugNavStatic, drawDebugNavDynamic,
+    drawAimLaser,
 } from './systems.js';
 
 export class GameScene extends Phaser.Scene {
@@ -42,7 +43,6 @@ export class GameScene extends Phaser.Scene {
         state.enemies         = [];
         state.playerInvincible = false;
         state.lastShotTime    = 0;
-        state.rightStickReset = true;
         Lifts.zones      = [];
         Lifts.playerOn   = null;
         Lifts.holdStart  = 0;
@@ -180,6 +180,10 @@ export class GameScene extends Phaser.Scene {
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
         this.cameras.main.startFollow(state.player, true, 0.08, 0.08);
 
+        // --- Aim laser ---
+        state.aimLaser = this.add.graphics();
+        state.aimLaser.setDepth(45);
+
         // --- HUD ---
         createHUD(this);
 
@@ -191,6 +195,7 @@ export class GameScene extends Phaser.Scene {
         // --- Cached keyboard keys ---
         state.keys = this.input.keyboard.addKeys({
             f:     'F',
+            space: 'SPACE',
             up:    'UP',
             down:  'DOWN',
             enter: 'ENTER',
@@ -248,20 +253,18 @@ export class GameScene extends Phaser.Scene {
         }
 
         if (!isDeckCleared()) {
-            let aimX = 0, aimY = 0;
-            if (!rsOut) {
-                state.rightStickReset = true;
-            } else if (state.rightStickReset) {
-                aimX = rsx;
-                aimY = rsy;
-            }
+            const firePressed = state.keys.space.isDown ||
+            (pad && pad.buttons[7] && pad.buttons[7].pressed);
 
-            if ((aimX !== 0 || aimY !== 0) && time > state.lastShotTime + BULLET_COOLDOWN) {
+            if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + BULLET_COOLDOWN) {
+                const aimX = Math.cos(state.playerFacing);
+                const aimY = Math.sin(state.playerFacing);
                 fireBullet(state.player.x, state.player.y, aimX, aimY);
                 state.lastShotTime = time;
-                state.rightStickReset = false;
             }
         }
+
+        drawAimLaser(rsOut, rsx, rsy);
 
         updateLiftHold(time, pad);
 

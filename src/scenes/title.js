@@ -30,10 +30,13 @@ export class TitleScene extends Phaser.Scene {
         this.add.text(400, 410, 'Move:          Left stick', {
             fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
         }).setOrigin(0.5);
-        this.add.text(400, 430, 'Aim & Fire:    Right stick', {
+        this.add.text(400, 430, 'Aim:           Right stick', {
             fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
         }).setOrigin(0.5);
-        this.add.text(400, 450, 'Lift activate: Hold F or right stick while on a lift', {
+        this.add.text(400, 450, 'Fire:          Right trigger / Space', {
+            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(400, 470, 'Lift activate: Hold F or right stick while on a lift', {
             fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
         }).setOrigin(0.5);
 
