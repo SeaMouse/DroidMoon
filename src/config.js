@@ -134,3 +134,16 @@ export const enemyTypes = {
         weight:        8,
     },
 };
+
+// ─────────────────────────────────────────────
+//  LEVEL 1 — URIDIUM-STYLE SHIP
+// ─────────────────────────────────────────────
+export const SHIP_THRUST_RATE    = 250;  // px/sec² — acceleration when input matches facing
+export const SHIP_BRAKE_RATE     = 400;  // px/sec² — deceleration when input opposes facing
+export const SHIP_MAX_SPEED      = 350;  // px/sec — top horizontal speed
+export const SHIP_VERTICAL_SPEED = 220;  // px/sec — vertical movement (no momentum)
+export const SHIP_MIN_SPEED      = 60;   // px/sec — ship never goes slower than this
+export const SHIP_FLIP_DURATION  = 250;  // ms — visual flip tween length
+export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
+export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
+export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip

@@ -3,6 +3,7 @@ import { TitleScene } from './scenes/title.js';
 import { GameScene } from './game-scene.js';
 import { EndScene } from './scenes/end.js';
 import { DeckSelectScene } from './scenes/deck-select.js';
+import { Level1Scene } from './scenes/level1.js';
 
 const config = {
     type: Phaser.AUTO,
@@ -17,7 +18,7 @@ const config = {
     input: {
         gamepad: true
     },
-    scene: [TitleScene, GameScene, EndScene, DeckSelectScene]
+    scene: [TitleScene, Level1Scene, GameScene, EndScene, DeckSelectScene]
 };
 
 new Phaser.Game(config);
