@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {
-    SHIP_THRUST_RATE, SHIP_BRAKE_RATE, SHIP_MAX_SPEED, SHIP_MIN_SPEED,
-    SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION,
+    SHIP_SPEED_LEVELS, SHIP_GEAR_SHIFT_MS,
+    SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
     SHIP_INITIAL_FACING,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
 } from '../config.js';
@@ -45,9 +45,13 @@ export class Level1Scene extends Phaser.Scene {
         this.ship = this.add.sprite(200, this.worldH / 2, 'ship');
 
         // --- Ship state (the heart of the momentum mechanic) ---
-        this.shipVelocity = SHIP_MIN_SPEED;       // signed: + = forward, - = backward
-        this.shipFacing   = SHIP_INITIAL_FACING;  // 1 = right, -1 = left
-        this.shipFlipping = false;
+        this.shipGear           = 0;                      // 0 = slowest forward gear
+        this.shipFacing         = SHIP_INITIAL_FACING;    // 1 right, -1 left
+        this.shipFlipping       = false;
+        this.shipGearShiftTimer = 0;                      // ms accumulator
+        this.shipFlipProgress   = 0;                      // 0..1, advanced manually during flip
+        this.shipFlipPhase = 'idle';                      // 'idle' | 'yaw' | 'roll'
+        this.shipPrevHorizInput = 0;                      // for resetting timer on input change
 
         // Camera follows the ship.
         this.cameras.main.startFollow(this.ship, true, 0.08, 0.08);
@@ -90,29 +94,76 @@ export class Level1Scene extends Phaser.Scene {
         }
 
         // --- Momentum logic (skipped while flip tween runs) ---
-        if (!this.shipFlipping) {
-            if (horizInput === this.shipFacing) {
-                this.shipVelocity += SHIP_THRUST_RATE * dt;
-            } else if (horizInput === -this.shipFacing) {
-                this.shipVelocity -= SHIP_BRAKE_RATE * dt;
-            }
+        let worldVx;
 
-            // Normal flight: cap at MAX_SPEED.
-            if (this.shipVelocity > SHIP_MIN_SPEED) {
-                this.shipVelocity = Math.min(this.shipVelocity, SHIP_MAX_SPEED);
-            } else if (this.shipVelocity >= 0) {
-                // Decelerated to (or below) MIN_SPEED while above zero.
-                this.shipVelocity = SHIP_MIN_SPEED;
-                if (horizInput === -this.shipFacing) {
-                    this.startFlip();
+        if (!this.shipFlipping) {
+            // Reset the gear-shift timer if input direction changed or went to zero.
+            // This stops players from accumulating ticks across separate presses.
+            if (horizInput !== this.shipPrevHorizInput) {
+                this.shipGearShiftTimer = 0;
+            }
+            this.shipPrevHorizInput = horizInput;
+
+            // Tick the timer while a directional input is held.
+            if (horizInput === this.shipFacing) {
+                // Forward input — gear up if not already at max.
+                if (this.shipGear < SHIP_SPEED_LEVELS.length - 1) {
+                    this.shipGearShiftTimer += delta;
+                    if (this.shipGearShiftTimer >= SHIP_GEAR_SHIFT_MS) {
+                        this.shipGear++;
+                        this.shipGearShiftTimer = 0;
+                    }
+                }
+            } else if (horizInput === -this.shipFacing) {
+                // Backward input — gear down, or flip at gear 0.
+                this.shipGearShiftTimer += delta;
+                if (this.shipGearShiftTimer >= SHIP_GEAR_SHIFT_MS) {
+                    if (this.shipGear > 0) {
+                        this.shipGear--;
+                        this.shipGearShiftTimer = 0;
+                    } else {
+                        this.shipGearShiftTimer = 0;
+                        this.startFlip();
+                    }
                 }
             }
-            // If shipVelocity is negative, we're in post-flip drift.
-            // Thrust above will gradually push it back up through zero.
+
+            // Cruising: velocity is gear's speed, in facing direction.
+            worldVx = SHIP_SPEED_LEVELS[this.shipGear] * this.shipFacing;
+        } else if (this.shipFlipPhase === 'yaw') {
+            // Phase 1: yaw. Velocity interpolates from +min through 0 to -min
+            // (in the *old* facing). At the end, swap facing and start the roll.
+            this.shipFlipProgress += delta / SHIP_FLIP_DURATION;
+
+            if (this.shipFlipProgress >= 1) {
+                this.shipFlipProgress = 1;
+                this.shipFacing      *= -1;
+                this.shipGear         = 0;
+                // Stay in flipping state, but transition to the roll phase.
+                this.shipFlipPhase    = 'roll';
+                this.shipFlipProgress = 0;
+                this.startBarrelRoll();
+            }
+
+            const flipMultiplier = 1 - 2 * this.shipFlipProgress;
+            // Note: shipFacing here is still the *old* facing — the swap above
+            // only fires on the final frame, when multiplier is exactly -1.
+            worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing * flipMultiplier;
+        } else {
+            // Phase 2: roll. Gameplay-wise the ship is already cruising at gear 0
+            // in the new facing — inputs are simply locked while the visual roll plays.
+            this.shipFlipProgress += delta / SHIP_BARREL_ROLL_DURATION;
+
+            if (this.shipFlipProgress >= 1) {
+                this.shipFlipPhase    = 'idle';
+                this.shipFlipping     = false;
+                this.shipFlipProgress = 0;
+            }
+
+            worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing;
         }
 
         // --- Apply motion to position manually ---
-        const worldVx = this.shipVelocity * this.shipFacing;
         const worldVy = vertInput * SHIP_VERTICAL_SPEED;
         this.ship.x += worldVx * dt;
         this.ship.y += worldVy * dt;
@@ -128,27 +179,36 @@ export class Level1Scene extends Phaser.Scene {
         // --- Debug overlay ---
         const drifting = this.shipVelocity < 0;
         this.debugText.setText([
-            'velocity: ' + this.shipVelocity.toFixed(1) + (drifting ? '  (drifting!)' : ''),
+            'gear:     ' + this.shipGear + ' / ' + (SHIP_SPEED_LEVELS.length - 1),
+                               'speed:    ' + SHIP_SPEED_LEVELS[this.shipGear],
                                'facing:   ' + (this.shipFacing === 1 ? 'right →' : '← left'),
-                               'flipping: ' + (this.shipFlipping ? 'YES' : 'no'),
+                               'flipping: ' + (this.shipFlipping ? 'YES (' + this.shipFlipPhase + ' ' + this.shipFlipProgress.toFixed(2) + ')' : 'no'),
+                               'shift:    ' + Math.round(this.shipGearShiftTimer) + ' / ' + SHIP_GEAR_SHIFT_MS + ' ms',
                                'world vx: ' + worldVx.toFixed(1),
-                               'pos:      ' + this.ship.x.toFixed(0) + ', ' + this.ship.y.toFixed(0),
         ].join('\n'));
     }
 
     startFlip() {
-        this.shipFlipping = true;
+        this.shipFlipping     = true;
+        this.shipFlipPhase    = 'yaw';
+        this.shipFlipProgress = 0;
 
+        // Phase 1 visual: horizontal flip (yaw).
         this.tweens.add({
             targets:  this.ship,
             scaleX:   -this.ship.scaleX,
             duration: SHIP_FLIP_DURATION,
             ease:     'Sine.easeInOut',
-            onComplete: () => {
-                this.shipFacing   *= -1;
-                this.shipVelocity  = -this.shipVelocity;
-                this.shipFlipping  = false;
-            }
+        });
+    }
+
+    startBarrelRoll() {
+        // Phase 2 visual: vertical flip (barrel roll), starts when phase 1 ends.
+        this.tweens.add({
+            targets:  this.ship,
+            scaleY:   -this.ship.scaleY,
+            duration: SHIP_BARREL_ROLL_DURATION,
+            ease:     'Sine.easeInOut',
         });
     }
 }
