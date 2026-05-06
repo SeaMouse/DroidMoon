@@ -58,7 +58,7 @@ export class GameScene extends Phaser.Scene {
         const map      = this.make.tilemap({ key: deckDef.mapKey });
         const tileset  = map.addTilesetImage('tiles', 'tiles');
         state.wallLayer = map.createLayer('Tile Layer 1', tileset, 0, 0);
-        state.wallLayer.setCollision(1);
+        state.wallLayer.setCollisionByProperty({ obstacle: true });
         buildNavGraph(map);
         extractWallSegments();
         extractWallCorners();
