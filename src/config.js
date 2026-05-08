@@ -147,3 +147,5 @@ export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip
 export const SHIP_SPEED_LEVELS  = [75, 150, 250, 400, 550, 700]; // px/sec, 6 gears
 export const SHIP_GEAR_UP_MS   = 70;   // ms between gear-up ticks (acceleration)
 export const SHIP_GEAR_DOWN_MS = 40;   // ms between gear-down ticks (braking)
+export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
+export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map edge

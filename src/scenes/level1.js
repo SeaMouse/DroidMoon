@@ -4,6 +4,7 @@ import {
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
     SHIP_INITIAL_FACING,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
+    SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
 } from '../config.js';
 
 export class Level1Scene extends Phaser.Scene {
@@ -105,6 +106,14 @@ export class Level1Scene extends Phaser.Scene {
             vertInput = pad.leftStick.y > 0 ? 1 : -1;
         }
 
+        // --- Auto-flip near map edges ---
+        const inLeftEdge  = this.ship.x < SHIP_EDGE_ZONE;
+        const inRightEdge = this.ship.x > this.worldW - SHIP_EDGE_ZONE;
+        if ((inLeftEdge  && this.shipFacing === -1) ||
+            (inRightEdge && this.shipFacing ===  1)) {
+            horizInput = -this.shipFacing;  // synthesize a brake input
+            }
+
         // --- Momentum logic (skipped while flip tween runs) ---
         let worldVx;
 
@@ -150,7 +159,7 @@ export class Level1Scene extends Phaser.Scene {
             if (this.shipFlipProgress >= 1) {
                 this.shipFlipProgress = 1;
                 this.shipFacing      *= -1;
-                this.shipGear         = 0;
+                this.shipGear         = 1;
                 // Stay in flipping state, but transition to the roll phase.
                 this.shipFlipPhase    = 'roll';
                 this.shipFlipProgress = 0;
@@ -187,6 +196,11 @@ export class Level1Scene extends Phaser.Scene {
         this.ship.y = Phaser.Math.Clamp(this.ship.y,
                                         SHIP_SKY_MARGIN_TOP + halfH,
                                         this.worldH - SHIP_SKY_MARGIN_BOTTOM - halfH);
+
+        // --- Camera lead based on current velocity ---
+        const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
+        const speedRatio = worldVx / maxSpeed;
+        this.cameras.main.setFollowOffset(-speedRatio * SHIP_CAMERA_LEAD_MAX, 0);
 
         // --- Debug overlay ---
         const drifting = this.shipVelocity < 0;
