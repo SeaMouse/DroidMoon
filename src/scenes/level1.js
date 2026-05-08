@@ -11,23 +11,39 @@ export class Level1Scene extends Phaser.Scene {
         super({ key: 'Level1Scene' });
     }
 
+    preload() {
+        this.load.image('tiles', 'assets/poc_tiles.png');
+        this.load.image('starfield', 'assets/starfield.png');
+        this.load.tilemapTiledJSON('ship_exterior', 'assets/ship_exterior.tmj');
+    }
+
     create() {
-        // World dimensions — wider than camera so we can scroll.
-        // Real tilemap replaces this in the next commit.
-        this.worldW = 3200;
-        this.worldH = 600;
+        // --- Tilemap ---
+        const map     = this.make.tilemap({ key: 'ship_exterior' });
+        const tileset = map.addTilesetImage('tiles', 'tiles');
+
+        // Image layer (Starfield) — Phaser reads parallaxx/parallaxy from Tiled.
+        map.createLayer('Starfield', tileset, 0, 0);
+
+        // Hull (decorative, no collision).
+        map.createLayer('Hull', tileset, 0, 0);
+
+        // Obstacles (collidable).
+        this.obstacleLayer = map.createLayer('Obstacles', tileset, 0, 0);
+        this.obstacleLayer.setCollisionByProperty({ obstacle: true });
+
+        // World dimensions come from the map.
+        this.worldW = map.widthInPixels;
+        this.worldH = map.heightInPixels;
         this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
 
-        // Backdrop + reference grid so motion is visible.
-        this.add.rectangle(0, 0, this.worldW, this.worldH, 0x1a1a2e).setOrigin(0);
-        const grid = this.add.graphics();
-        grid.lineStyle(1, 0x2a2a4e, 1);
-        for (let x = 0; x < this.worldW; x += 200) {
-            grid.beginPath(); grid.moveTo(x, 0); grid.lineTo(x, this.worldH); grid.strokePath();
-        }
+        // --- Player spawn from PlayerStart object layer ---
+        const startLayer = map.getObjectLayer('PlayerStart');
+        const startPoint = startLayer ? startLayer.objects[0] : null;
+        const spawnX = startPoint ? startPoint.x : 200;
+        const spawnY = startPoint ? startPoint.y : this.worldH / 2;
 
-        // Placeholder ship texture — green triangle pointing right with a
-        // dark dot near the nose, so the flip is visually obvious.
+        // --- Ship texture (placeholder) ---
         if (!this.textures.exists('ship')) {
             const g = this.add.graphics();
             g.fillStyle(0x44ffaa, 1);
@@ -41,25 +57,21 @@ export class Level1Scene extends Phaser.Scene {
             g.destroy();
         }
 
-        // Plain (non-physics) sprite — we'll move it manually each frame.
-        this.ship = this.add.sprite(200, this.worldH / 2, 'ship');
+        this.ship = this.add.sprite(spawnX, spawnY, 'ship');
 
-        // --- Ship state (the heart of the momentum mechanic) ---
-        this.shipGear           = 0;                      // 0 = slowest forward gear
-        this.shipFacing         = SHIP_INITIAL_FACING;    // 1 right, -1 left
+        // --- Ship state ---
+        this.shipGear           = 0;
+        this.shipFacing         = SHIP_INITIAL_FACING;
         this.shipFlipping       = false;
-        this.shipGearShiftTimer = 0;                      // ms accumulator
-        this.shipFlipProgress   = 0;                      // 0..1, advanced manually during flip
-        this.shipFlipPhase = 'idle';                      // 'idle' | 'yaw' | 'roll'
-        this.shipPrevHorizInput = 0;                      // for resetting timer on input change
+        this.shipGearShiftTimer = 0;
+        this.shipFlipProgress   = 0;
+        this.shipFlipPhase      = 'idle';
+        this.shipPrevHorizInput = 0;
 
-        // Camera follows the ship.
         this.cameras.main.startFollow(this.ship, true, 0.08, 0.08);
 
-        // Input.
         this.cursors = this.input.keyboard.createCursorKeys();
 
-        // Debug overlay, pinned to camera.
         this.debugText = this.add.text(8, 8, '', {
             fontFamily: 'monospace', fontSize: '12px',
             fill: '#aaffcc',

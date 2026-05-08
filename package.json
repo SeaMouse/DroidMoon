@@ -1,12 +1,14 @@
 {
   "name": "droid-moon",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "main": "game.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync-tiles": "node scripts/sync-tile-properties.js"
   },
   "repository": {
     "type": "git",

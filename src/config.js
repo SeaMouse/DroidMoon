@@ -32,8 +32,8 @@ export const DIM_COLOUR = 0x444466;
 // ─────────────────────────────────────────────
 export const deckDefinitions = {
     deck1: {
-        mapKey:      'level1',
-        mapFile:     'assets/level1.tmj',
+        mapKey:      'ship_deck_1',
+        mapFile:     'assets/ship_deck_1.tmj',
         label:       'Deck 1 - Bridge',
         playerStart: { x: 82, y: 82 },
         enemies: [
@@ -44,8 +44,8 @@ export const deckDefinitions = {
         ],
     },
     deck2: {
-        mapKey:      'level2',
-        mapFile:     'assets/level2.tmj',
+        mapKey:      'ship_deck_2',
+        mapFile:     'assets/ship_deck_2.tmj',
         label:       'Deck 2 - Engineering',
         playerStart: { x: 82, y: 82 },
         enemies: [
@@ -57,8 +57,8 @@ export const deckDefinitions = {
         ],
     },
     deck3: {
-        mapKey:      'level3',
-        mapFile:     'assets/level3.tmj',
+        mapKey:      'ship_deck_3',
+        mapFile:     'assets/ship_deck_3.tmj',
         label:       'Deck 3 - Cargo Bay',
         playerStart: { x: 82, y: 82 },
         enemies: [
