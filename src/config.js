@@ -138,11 +138,12 @@ export const enemyTypes = {
 // ─────────────────────────────────────────────
 //  LEVEL 1 — URIDIUM-STYLE SHIP
 // ─────────────────────────────────────────────
-export const SHIP_VERTICAL_SPEED = 300;  // px/sec — vertical movement (no momentum)
-export const SHIP_FLIP_DURATION  = 350;  // ms — visual flip tween length
-export const SHIP_BARREL_ROLL_DURATION = 350;  // ms — phase 2 of the flip, visual only
+export const SHIP_VERTICAL_SPEED = 275;  // px/sec — vertical movement (no momentum)
+export const SHIP_FLIP_DURATION  = 450;  // ms — visual flip tween length
+export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only
 export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
 export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
 export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip
-export const SHIP_SPEED_LEVELS  = [100, 150, 220, 310, 450, 500]; // px/sec, 6 gears
-export const SHIP_GEAR_SHIFT_MS = 150;                          // ms per gear change
+export const SHIP_SPEED_LEVELS  = [75, 150, 250, 400, 550, 700]; // px/sec, 6 gears
+export const SHIP_GEAR_UP_MS   = 70;   // ms between gear-up ticks (acceleration)
+export const SHIP_GEAR_DOWN_MS = 40;   // ms between gear-down ticks (braking)

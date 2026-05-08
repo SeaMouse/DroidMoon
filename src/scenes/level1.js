@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-    SHIP_SPEED_LEVELS, SHIP_GEAR_SHIFT_MS,
+    SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
     SHIP_INITIAL_FACING,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
@@ -121,7 +121,7 @@ export class Level1Scene extends Phaser.Scene {
                 // Forward input — gear up if not already at max.
                 if (this.shipGear < SHIP_SPEED_LEVELS.length - 1) {
                     this.shipGearShiftTimer += delta;
-                    if (this.shipGearShiftTimer >= SHIP_GEAR_SHIFT_MS) {
+                    if (this.shipGearShiftTimer >= SHIP_GEAR_UP_MS) {
                         this.shipGear++;
                         this.shipGearShiftTimer = 0;
                     }
@@ -129,7 +129,7 @@ export class Level1Scene extends Phaser.Scene {
             } else if (horizInput === -this.shipFacing) {
                 // Backward input — gear down, or flip at gear 0.
                 this.shipGearShiftTimer += delta;
-                if (this.shipGearShiftTimer >= SHIP_GEAR_SHIFT_MS) {
+                if (this.shipGearShiftTimer >= SHIP_GEAR_DOWN_MS) {
                     if (this.shipGear > 0) {
                         this.shipGear--;
                         this.shipGearShiftTimer = 0;
@@ -195,7 +195,7 @@ export class Level1Scene extends Phaser.Scene {
                                'speed:    ' + SHIP_SPEED_LEVELS[this.shipGear],
                                'facing:   ' + (this.shipFacing === 1 ? 'right →' : '← left'),
                                'flipping: ' + (this.shipFlipping ? 'YES (' + this.shipFlipPhase + ' ' + this.shipFlipProgress.toFixed(2) + ')' : 'no'),
-                               'shift:    ' + Math.round(this.shipGearShiftTimer) + ' / ' + SHIP_GEAR_SHIFT_MS + ' ms',
+                               'shift:    ' + Math.round(this.shipGearShiftTimer) + ' ms',
                                'world vx: ' + worldVx.toFixed(1),
         ].join('\n'));
     }
