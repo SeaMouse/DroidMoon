@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { state, resetGameState } from '../state.js';
 import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
@@ -37,6 +38,7 @@ export class Level1Scene extends Phaser.Scene {
         this.worldW = map.widthInPixels;
         this.worldH = map.heightInPixels;
         this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
+        this.shipCameraLead = 0;
 
         // --- Player spawn from PlayerStart object layer ---
         const startLayer = map.getObjectLayer('PlayerStart');
@@ -58,7 +60,38 @@ export class Level1Scene extends Phaser.Scene {
             g.destroy();
         }
 
-        this.ship = this.add.sprite(spawnX, spawnY, 'ship');
+        this.ship = this.physics.add.sprite(spawnX, spawnY, 'ship');
+
+        // Constrain physics world to the flight band (excludes sky margins + map edges).
+        this.physics.world.setBounds(
+            0,
+            SHIP_SKY_MARGIN_TOP,
+            this.worldW,
+            this.worldH - SHIP_SKY_MARGIN_TOP - SHIP_SKY_MARGIN_BOTTOM
+        );
+        this.ship.body.setCollideWorldBounds(true);
+
+        // Bump into tagged obstacle tiles.
+        this.physics.add.collider(this.ship, this.obstacleLayer);
+
+        // --- Landing zones ---
+        this.landingZones = [];
+        const landingLayer = map.getObjectLayer('LandingZones');
+        if (landingLayer) {
+            for (const obj of landingLayer.objects) {
+                const props = obj.properties || [];
+                const target = props.find(p => p.name === 'targetDeck');
+                if (!target) {
+                    console.warn('Landing zone "' + obj.name + '" has no targetDeck property; defaulting to deck1.');
+                }
+                this.landingZones.push({
+                    name:       obj.name,
+                    rect:       new Phaser.Geom.Rectangle(obj.x, obj.y, obj.width, obj.height),
+                                       targetDeck: target ? target.value : 'deck1',
+                });
+            }
+        }
+        this.landingTriggered = false;
 
         // --- Ship state ---
         this.shipGear           = 0;
@@ -69,7 +102,7 @@ export class Level1Scene extends Phaser.Scene {
         this.shipFlipPhase      = 'idle';
         this.shipPrevHorizInput = 0;
 
-        this.cameras.main.startFollow(this.ship, true, 0.08, 0.08);
+        this.cameras.main.startFollow(this.ship, true, 1, 1);
 
         this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -82,6 +115,7 @@ export class Level1Scene extends Phaser.Scene {
     }
 
     update(time, delta) {
+        if (this.landingTriggered) { return; }
         // Defensive: if delta is missing or absurd, fall back to a sensible default.
         if (delta === undefined || isNaN(delta) || delta > 100) {
             delta = 16.67;
@@ -184,23 +218,27 @@ export class Level1Scene extends Phaser.Scene {
             worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing;
         }
 
-        // --- Apply motion to position manually ---
-        const worldVy = vertInput * SHIP_VERTICAL_SPEED;
-        this.ship.x += worldVx * dt;
-        this.ship.y += worldVy * dt;
+        // --- Landing zone check ---
+        if (this.isLandingUnlocked()) {
+            const sb = this.ship.getBounds();
+            for (const zone of this.landingZones) {
+                if (Phaser.Geom.Intersects.RectangleToRectangle(sb, zone.rect)) {
+                    this.triggerLanding(zone);
+                    return;
+                }
+            }
+        }
 
-        // --- Clamp to world bounds and sky margins ---
-        const halfW = this.ship.displayWidth  / 2;
-        const halfH = this.ship.displayHeight / 2;
-        this.ship.x = Phaser.Math.Clamp(this.ship.x, halfW, this.worldW - halfW);
-        this.ship.y = Phaser.Math.Clamp(this.ship.y,
-                                        SHIP_SKY_MARGIN_TOP + halfH,
-                                        this.worldH - SHIP_SKY_MARGIN_BOTTOM - halfH);
+        // --- Apply motion via the physics body so collisions resolve automatically ---
+        const worldVy = vertInput * SHIP_VERTICAL_SPEED;
+        this.ship.body.setVelocity(worldVx, worldVy);
 
         // --- Camera lead based on current velocity ---
         const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
-        const speedRatio = worldVx / maxSpeed;
-        this.cameras.main.setFollowOffset(-speedRatio * SHIP_CAMERA_LEAD_MAX, 0);
+        const targetLead = -(worldVx / maxSpeed) * SHIP_CAMERA_LEAD_MAX;
+        const LEAD_SMOOTH = 0.1;  // lower = floatier, higher = snappier
+        this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
+        this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
 
         // --- Debug overlay ---
         const drifting = this.shipVelocity < 0;
@@ -237,4 +275,31 @@ export class Level1Scene extends Phaser.Scene {
             ease:     'Sine.easeInOut',
         });
     }
+
+
+isLandingUnlocked() {
+    // Future: return false until ship defenses are destroyed.
+    return true;
+}
+
+triggerLanding(zone) {
+    this.landingTriggered = true;
+    this.ship.body.setVelocity(0, 0);
+
+    const def      = zone.targetDeck;
+    const labelTxt = 'LANDING — ' + def.toUpperCase();
+    this.add.rectangle(400, 300, 420, 80, 0x000000, 0.75)
+    .setScrollFactor(0).setDepth(200);
+    this.add.text(400, 300, labelTxt, {
+        fontFamily: 'monospace', fontSize: '24px',
+        fill: '#44aaff', stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+    this.cameras.main.fadeOut(800, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+        resetGameState();           // wipes deckStates etc. — fresh start.
+        state.currentDeck = zone.targetDeck;
+        this.scene.start('GameScene');
+    });
+}
 }
