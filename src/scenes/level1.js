@@ -257,22 +257,40 @@ export class Level1Scene extends Phaser.Scene {
         this.shipFlipPhase    = 'yaw';
         this.shipFlipProgress = 0;
 
-        // Phase 1 visual: horizontal flip (yaw).
+        // Phase 1 visual: squish to 0 on X, toggle flipX, squish back to 1.
         this.tweens.add({
             targets:  this.ship,
-            scaleX:   -this.ship.scaleX,
-            duration: SHIP_FLIP_DURATION,
-            ease:     'Sine.easeInOut',
+            scaleX:   0,
+            duration: SHIP_FLIP_DURATION / 2,
+            ease:     'Sine.easeIn',
+            onComplete: () => {
+                this.ship.flipX = !this.ship.flipX;
+                this.tweens.add({
+                    targets:  this.ship,
+                    scaleX:   1,
+                    duration: SHIP_FLIP_DURATION / 2,
+                    ease:     'Sine.easeOut',
+                });
+            }
         });
     }
 
     startBarrelRoll() {
-        // Phase 2 visual: vertical flip (barrel roll), starts when phase 1 ends.
+        // Phase 2 visual: squish to 0 on Y, toggle flipY, squish back to 1.
         this.tweens.add({
             targets:  this.ship,
-            scaleY:   -this.ship.scaleY,
-            duration: SHIP_BARREL_ROLL_DURATION,
-            ease:     'Sine.easeInOut',
+            scaleY:   0,
+            duration: SHIP_BARREL_ROLL_DURATION / 2,
+            ease:     'Sine.easeIn',
+            onComplete: () => {
+                this.ship.flipY = !this.ship.flipY;
+                this.tweens.add({
+                    targets:  this.ship,
+                    scaleY:   1,
+                    duration: SHIP_BARREL_ROLL_DURATION / 2,
+                    ease:     'Sine.easeOut',
+                });
+            }
         });
     }
 
