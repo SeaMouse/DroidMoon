@@ -102,7 +102,9 @@ export class Level1Scene extends Phaser.Scene {
         this.shipFlipPhase      = 'idle';
         this.shipPrevHorizInput = 0;
 
+        // ─── CHANGED ───
         this.cameras.main.startFollow(this.ship, true, 1, 1);
+        // Camera is now positioned manually at the end of update() instead.
 
         this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -148,20 +150,16 @@ export class Level1Scene extends Phaser.Scene {
             horizInput = -this.shipFacing;  // synthesize a brake input
             }
 
-        // --- Momentum logic (skipped while flip tween runs) ---
-        let worldVx;
+            // --- Momentum logic (skipped while flip tween runs) ---
+            let worldVx;
 
         if (!this.shipFlipping) {
-            // Reset the gear-shift timer if input direction changed or went to zero.
-            // This stops players from accumulating ticks across separate presses.
             if (horizInput !== this.shipPrevHorizInput) {
                 this.shipGearShiftTimer = 0;
             }
             this.shipPrevHorizInput = horizInput;
 
-            // Tick the timer while a directional input is held.
             if (horizInput === this.shipFacing) {
-                // Forward input — gear up if not already at max.
                 if (this.shipGear < SHIP_SPEED_LEVELS.length - 1) {
                     this.shipGearShiftTimer += delta;
                     if (this.shipGearShiftTimer >= SHIP_GEAR_UP_MS) {
@@ -170,7 +168,6 @@ export class Level1Scene extends Phaser.Scene {
                     }
                 }
             } else if (horizInput === -this.shipFacing) {
-                // Backward input — gear down, or flip at gear 0.
                 this.shipGearShiftTimer += delta;
                 if (this.shipGearShiftTimer >= SHIP_GEAR_DOWN_MS) {
                     if (this.shipGear > 0) {
@@ -183,30 +180,22 @@ export class Level1Scene extends Phaser.Scene {
                 }
             }
 
-            // Cruising: velocity is gear's speed, in facing direction.
             worldVx = SHIP_SPEED_LEVELS[this.shipGear] * this.shipFacing;
         } else if (this.shipFlipPhase === 'yaw') {
-            // Phase 1: yaw. Velocity interpolates from +min through 0 to -min
-            // (in the *old* facing). At the end, swap facing and start the roll.
             this.shipFlipProgress += delta / SHIP_FLIP_DURATION;
 
             if (this.shipFlipProgress >= 1) {
                 this.shipFlipProgress = 1;
                 this.shipFacing      *= -1;
                 this.shipGear         = 1;
-                // Stay in flipping state, but transition to the roll phase.
                 this.shipFlipPhase    = 'roll';
                 this.shipFlipProgress = 0;
                 this.startBarrelRoll();
             }
 
             const flipMultiplier = 1 - 2 * this.shipFlipProgress;
-            // Note: shipFacing here is still the *old* facing — the swap above
-            // only fires on the final frame, when multiplier is exactly -1.
             worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing * flipMultiplier;
         } else {
-            // Phase 2: roll. Gameplay-wise the ship is already cruising at gear 0
-            // in the new facing — inputs are simply locked while the visual roll plays.
             this.shipFlipProgress += delta / SHIP_BARREL_ROLL_DURATION;
 
             if (this.shipFlipProgress >= 1) {
@@ -236,12 +225,11 @@ export class Level1Scene extends Phaser.Scene {
         // --- Camera lead based on current velocity ---
         const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
         const targetLead = -(worldVx / maxSpeed) * SHIP_CAMERA_LEAD_MAX;
-        const LEAD_SMOOTH = 0.1;  // lower = floatier, higher = snappier
+        const LEAD_SMOOTH = 0.1;
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
-        this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
+        this.cameras.main.setFollowOffset(-this.shipCameraLead, 0);
 
         // --- Debug overlay ---
-        const drifting = this.shipVelocity < 0;
         this.debugText.setText([
             'gear:     ' + this.shipGear + ' / ' + (SHIP_SPEED_LEVELS.length - 1),
                                'speed:    ' + SHIP_SPEED_LEVELS[this.shipGear],
