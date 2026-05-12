@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
+import { LaserBeams } from '../laser-beams.js';
 import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
@@ -92,6 +93,9 @@ export class Level1Scene extends Phaser.Scene {
             }
         }
         this.landingTriggered = false;
+
+        // --- Twin laser blasters ---
+        this.laserBeams = new LaserBeams(this, this.ship, this.obstacleLayer);
 
         // --- Ship state ---
         this.shipGear           = 0;
@@ -228,6 +232,13 @@ export class Level1Scene extends Phaser.Scene {
         const LEAD_SMOOTH = 0.1;
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
         this.cameras.main.setFollowOffset(-this.shipCameraLead, 0);
+
+        // --- Twin laser fire ---
+        const firing = !this.shipFlipping && (
+            this.cursors.space.isDown ||
+            (pad && pad.buttons[7] && pad.buttons[7].value > 0.5)
+        );
+        this.laserBeams.update(time, firing, this.shipFacing);
 
         // --- Debug overlay ---
         this.debugText.setText([

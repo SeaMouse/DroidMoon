@@ -149,3 +149,15 @@ export const SHIP_GEAR_UP_MS   = 70;   // ms between gear-up ticks (acceleration
 export const SHIP_GEAR_DOWN_MS = 40;   // ms between gear-down ticks (braking)
 export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
 export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map edge
+
+// ─────────────────────────────────────────────
+//  LEVEL 1 — TWIN LASER BLASTERS
+// ─────────────────────────────────────────────
+export const LASER_FIRE_INTERVAL_MS = 40;   // ms between pulses (≈25/sec)
+export const LASER_PULSE_LIFE_MS    = 50;   // ms each pulse stays visible
+export const LASER_EMITTER_X_OFFSET = 24;   // px forward of ship centre (to the nose)
+export const LASER_EMITTER_Y_OFFSET = 10;   // px above/below ship centre (twin guns)
+export const LASER_RAYCAST_STEP     = 8;    // px per raycast step
+export const LASER_COLOUR_CORE  = 0xffffff;  // hot white core
+export const LASER_COLOUR_MID   = 0x88ddff;  // cyan-blue mid
+export const LASER_COLOUR_GLOW  = 0x00aaff;  // deep blue outer glow
