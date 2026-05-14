@@ -2725,6 +2725,7 @@
       "spacing": 0,
       "tilecount": 800,
       "tileheight": 32,
+      "tilewidth": 32,
       "tiles": [
         {
           "id": 0,
@@ -2742,7 +2743,7 @@
             {
               "name": "obstacle",
               "type": "bool",
-              "value": true
+              "value": false
             }
           ]
         },
@@ -2776,8 +2777,7 @@
             }
           ]
         }
-      ],
-      "tilewidth": 32
+      ]
     }
   ],
   "tilewidth": 32,

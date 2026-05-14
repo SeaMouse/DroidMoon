@@ -59,10 +59,54 @@ export class LaserBeams {
             x += facing * LASER_RAYCAST_STEP;
             const tile = this.obstacleLayer.getTileAtWorldXY(x, startY);
             if (tile && tile.properties && tile.properties.obstacle) {
+                // if it's destructible, swap it for the damaged version
+                if (tile.properties.destructable) {
+                    this.destroyTile(tile);
+                }
                 return x;  // hit point — close enough for visuals
             }
         }
         return limitX;
+    }
+
+    destroyTile(tile) {
+        const idx = tile.properties.destroyedIndex;
+
+        // No replacement specified → clear the tile entirely.
+        if (idx === undefined || idx < 0) {
+            this.obstacleLayer.removeTileAt(tile.x, tile.y);
+            return;
+        }
+
+        // Tiled tile IDs are 0-indexed within the tileset; Phaser map indexes
+        // are firstgid-offset across the whole map. Translate before placing.
+        const firstgid = tile.tileset ? tile.tileset.firstgid : 1;
+        const newTile  = this.obstacleLayer.putTileAt(idx + firstgid, tile.x, tile.y);
+
+        // Replacement only collides if it itself has the `obstacle` flag.
+        if (newTile) {
+            // putTileAt replaces the tile's index but leaves the old tile's
+            // `properties` object intact. Look the new properties up from the
+            // tileset directly, then overwrite the stale ones so future checks
+            // (raycast, etc.) also see the right values.
+            const tileset = tile.tileset;
+            const tsProps = (tileset && tileset.getTileProperties)
+            ? tileset.getTileProperties(idx + firstgid)
+            : null;
+            newTile.properties = tsProps ? { ...tsProps } : {};
+
+            const isObstacle = !!newTile.properties.obstacle;
+            newTile.collideLeft  = isObstacle;
+            newTile.collideRight = isObstacle;
+            newTile.collideUp    = isObstacle;
+            newTile.collideDown  = isObstacle;
+            newTile.faceLeft     = isObstacle;
+            newTile.faceRight    = isObstacle;
+            newTile.faceTop      = isObstacle;
+            newTile.faceBottom   = isObstacle;
+
+            this.obstacleLayer.calculateFacesAt(newTile.x, newTile.y);
+        }
     }
 
     // Three concentric strokes: wide+dim glow, medium mid, thin+bright core.

@@ -152,6 +152,17 @@ function patchTmj(path, metadata, tilesData) {
         spacing:     metadata.spacing,
         tilecount:   metadata.tilecount,
         tileheight:  metadata.tileheight,
+        tilewidth:   metadata.tilewidth,
+        tiles:       tilesData,
+    };
+
+    writeFileSync(path, JSON.stringify(json, null, 2));
+    return {
+        ok: true,
+        removedDuplicates: duplicates.length,
+        remappedTiles,
+    };
+}
 
 const { metadata, tiles } = parseTsx(readFileSync(TSX_PATH, 'utf8'));
 console.log(`Read tileset "${metadata.name}" (${metadata.tilecount} tiles, image: ${metadata.image})`);
