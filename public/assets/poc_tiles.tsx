@@ -20,6 +20,7 @@
   <properties>
    <property name="destroyedIndex" type="int" value="2"/>
    <property name="destructable" type="bool" value="true"/>
+   <property name="obstacle" type="bool" value="true"/>
   </properties>
  </tile>
 </tileset>

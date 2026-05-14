@@ -75,21 +75,75 @@ function patchTmj(path, metadata, tilesData) {
         return { ok: false, reason: 'no tilesets array' };
     }
 
-    const idx = json.tilesets.findIndex(ts =>
-    ts.source === TSX_NAME || ts.image === metadata.image
-    );
-    if (idx === -1) {
+    // Find every tileset entry pointing at our image or .tsx.
+    const matchIndices = [];
+    for (let i = 0; i < json.tilesets.length; i++) {
+        const ts = json.tilesets[i];
+        if (ts.source === TSX_NAME || ts.image === metadata.image) {
+            matchIndices.push(i);
+        }
+    }
+    if (matchIndices.length === 0) {
         return { ok: false, reason: 'no matching tileset' };
     }
 
-    const existing = json.tilesets[idx];
-    const wasExternal = !!existing.source;
-    const firstgid = existing.firstgid;
+    // Pick the canonical entry: prefer an embedded one (has image, no source).
+    let canonicalIdx = matchIndices.find(i =>
+    json.tilesets[i].image && !json.tilesets[i].source
+    );
+    if (canonicalIdx === undefined) { canonicalIdx = matchIndices[0]; }
+    const canonicalEntry    = json.tilesets[canonicalIdx];
+    const canonicalFirstgid = canonicalEntry.firstgid;
 
-    // Rebuild the entry in alphabetical key order to match Tiled's own output.
-    json.tilesets[idx] = {
+    // Everything else matching is a duplicate. For each, remap any GIDs in
+    // layer/object data that fall in its range, then drop the entry.
+    const FLIP_FLAGS = 0xE0000000;  // Tiled's flip/rotate flag bits
+    const GID_MASK   = 0x1FFFFFFF;
+    let remappedTiles = 0;
+
+    const duplicates = matchIndices.filter(i => i !== canonicalIdx);
+
+    for (const dupIdx of duplicates) {
+        const dup   = json.tilesets[dupIdx];
+        const shift = canonicalFirstgid - dup.firstgid;
+        const lo    = dup.firstgid;
+        const hi    = dup.firstgid + metadata.tilecount - 1;
+
+        const remap = (gid) => {
+            const flags = gid & FLIP_FLAGS;
+            const clean = gid & GID_MASK;
+            if (clean >= lo && clean <= hi) {
+                remappedTiles++;
+                return (clean + shift) | flags;
+            }
+            return gid;
+        };
+
+        if (Array.isArray(json.layers)) {
+            for (const layer of json.layers) {
+                if (layer.type === 'tilelayer' && Array.isArray(layer.data)) {
+                    for (let k = 0; k < layer.data.length; k++) {
+                        layer.data[k] = remap(layer.data[k]);
+                    }
+                } else if (layer.type === 'objectgroup' && Array.isArray(layer.objects)) {
+                    for (const obj of layer.objects) {
+                        if (typeof obj.gid === 'number') { obj.gid = remap(obj.gid); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Drop duplicates (highest index first so lower indices stay valid).
+    duplicates.sort((a, b) => b - a).forEach(i => json.tilesets.splice(i, 1));
+
+    // Canonical's index may have shifted after the splices.
+    const newIdx = json.tilesets.indexOf(canonicalEntry);
+
+    // Rebuild as a fully embedded entry, alphabetical key order.
+    json.tilesets[newIdx] = {
         columns:     metadata.columns,
-        firstgid:    firstgid,
+        firstgid:    canonicalFirstgid,
         image:       metadata.image,
         imageheight: metadata.imageheight,
         imagewidth:  metadata.imagewidth,
@@ -98,13 +152,6 @@ function patchTmj(path, metadata, tilesData) {
         spacing:     metadata.spacing,
         tilecount:   metadata.tilecount,
         tileheight:  metadata.tileheight,
-        tiles:       tilesData,
-        tilewidth:   metadata.tilewidth,
-    };
-
-    writeFileSync(path, JSON.stringify(json, null, 2));
-    return { ok: true, wasExternal };
-}
 
 const { metadata, tiles } = parseTsx(readFileSync(TSX_PATH, 'utf8'));
 console.log(`Read tileset "${metadata.name}" (${metadata.tilecount} tiles, image: ${metadata.image})`);
@@ -119,8 +166,11 @@ console.log(`\nPatching ${files.length} .tmj files:`);
 for (const file of files) {
     const result = patchTmj(join(ASSETS, file), metadata, tiles);
     if (result.ok) {
-        const tag = result.wasExternal ? 'embedded' : 'updated';
-        console.log(`  ✓ ${file}  (${tag})`);
+        let note = 'updated';
+        if (result.removedDuplicates > 0) {
+            note = `cleaned up ${result.removedDuplicates} duplicate tileset(s), remapped ${result.remappedTiles} tile(s)`;
+        }
+        console.log(`  ✓ ${file}  (${note})`);
     } else {
         console.log(`  ✗ ${file}  (${result.reason})`);
     }

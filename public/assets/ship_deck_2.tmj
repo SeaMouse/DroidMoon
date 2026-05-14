@@ -2768,6 +2768,11 @@
               "name": "destructable",
               "type": "bool",
               "value": true
+            },
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
             }
           ]
         }
