@@ -138,15 +138,15 @@ export const enemyTypes = {
 // ─────────────────────────────────────────────
 //  LEVEL 1 — URIDIUM-STYLE SHIP
 // ─────────────────────────────────────────────
-export const SHIP_VERTICAL_SPEED = 275;  // px/sec — vertical movement (no momentum)
+export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
 export const SHIP_FLIP_DURATION  = 450;  // ms — visual flip tween length
 export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only
 export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
 export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
 export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip
 export const SHIP_SPEED_LEVELS  = [75, 150, 250, 400, 550, 700]; // px/sec, 6 gears
-export const SHIP_GEAR_UP_MS   = 70;   // ms between gear-up ticks (acceleration)
-export const SHIP_GEAR_DOWN_MS = 40;   // ms between gear-down ticks (braking)
+export const SHIP_GEAR_UP_MS   = 60;   // ms between gear-up ticks (acceleration)
+export const SHIP_GEAR_DOWN_MS = 30;   // ms between gear-down ticks (braking)
 export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
 export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map edge
 
@@ -154,10 +154,10 @@ export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map 
 //  LEVEL 1 — TWIN LASER BLASTERS
 // ─────────────────────────────────────────────
 export const LASER_FIRE_INTERVAL_MS = 40;   // ms between pulses (≈25/sec)
-export const LASER_PULSE_LIFE_MS    = 50;   // ms each pulse stays visible
-export const LASER_EMITTER_X_OFFSET = 24;   // px forward of ship centre (to the nose)
-export const LASER_EMITTER_Y_OFFSET = 10;   // px above/below ship centre (twin guns)
-export const LASER_RAYCAST_STEP     = 8;    // px per raycast step
+export const LASER_PULSE_LIFE_MS    = 20;   // ms each pulse stays visible
+export const LASER_EMITTER_X_OFFSET = 5;   // px forward of ship centre (to the nose)
+export const LASER_EMITTER_Y_OFFSET = 12;   // px above/below ship centre (twin guns)
+export const LASER_RAYCAST_STEP     = 4;    // px per raycast step
 export const LASER_COLOUR_CORE  = 0xffffff;  // hot white core
 export const LASER_COLOUR_MID   = 0x88ddff;  // cyan-blue mid
 export const LASER_COLOUR_GLOW  = 0x00aaff;  // deep blue outer glow

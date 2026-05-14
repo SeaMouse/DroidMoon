@@ -229,9 +229,9 @@ export class Level1Scene extends Phaser.Scene {
         // --- Camera lead based on current velocity ---
         const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
         const targetLead = -(worldVx / maxSpeed) * SHIP_CAMERA_LEAD_MAX;
-        const LEAD_SMOOTH = 0.1;
+        const LEAD_SMOOTH = 0.05;
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
-        this.cameras.main.setFollowOffset(-this.shipCameraLead, 0);
+        this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
 
         // --- Twin laser fire ---
         const firing = !this.shipFlipping && (
