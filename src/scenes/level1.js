@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
 import { LaserBeams } from '../laser-beams.js';
+import { Turret } from '../turret.js';
 import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
@@ -17,6 +18,8 @@ export class Level1Scene extends Phaser.Scene {
     preload() {
         this.load.image('tiles', 'assets/poc_tiles.png');
         this.load.image('starfield', 'assets/starfield.png');
+        this.load.image('turret_base', 'assets/tower01_128.png');
+        this.load.image('turret_cannon', 'assets/turret_01_mk2.png');
         this.load.tilemapTiledJSON('ship_exterior', 'assets/ship_exterior.tmj');
     }
 
@@ -96,6 +99,17 @@ export class Level1Scene extends Phaser.Scene {
 
         // --- Twin laser blasters ---
         this.laserBeams = new LaserBeams(this, this.ship, this.obstacleLayer);
+
+        // --- Turrets ---
+        this.turrets = [];
+        const turretLayer = map.getObjectLayer('Turrets');
+        if (turretLayer) {
+            for (const obj of turretLayer.objects) {
+                this.turrets.push(new Turret(this, obj.x, obj.y));
+            }
+        } else {
+            console.warn('Level1: no "Turrets" object layer found in map.');
+        }
 
         // --- Ship state ---
         this.shipGear           = 0;
@@ -239,6 +253,10 @@ export class Level1Scene extends Phaser.Scene {
             (pad && pad.buttons[7] && pad.buttons[7].value > 0.5)
         );
         this.laserBeams.update(time, firing, this.shipFacing);
+        // --- Turrets
+        for (const t of this.turrets) {
+            t.update(this.ship);
+        }
 
         // --- Debug overlay ---
         this.debugText.setText([
