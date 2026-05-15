@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
-import { LaserBeams } from '../laser-beams.js';
 import { Turret } from '../turret.js';
+import { BulletPool } from '../systems.js';
 import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
     SHIP_INITIAL_FACING,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
     SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
+    LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,    // still useful as gun offsets
+    SHIP_BULLET_COOLDOWN_MS, SHIP_BULLET_SPEED, SHIP_BULLET_DAMAGE, SHIP_BULLET_MAX_POOL,
 } from '../config.js';
 
 export class Level1Scene extends Phaser.Scene {
@@ -74,6 +76,8 @@ export class Level1Scene extends Phaser.Scene {
             this.worldH - SHIP_SKY_MARGIN_TOP - SHIP_SKY_MARGIN_BOTTOM
         );
         this.ship.body.setCollideWorldBounds(true);
+        // Stop fast bullets tunneling through obstacle tiles.
+        this.physics.world.TILE_BIAS = 64;
 
         // Bump into tagged obstacle tiles.
         this.physics.add.collider(this.ship, this.obstacleLayer);
@@ -97,8 +101,34 @@ export class Level1Scene extends Phaser.Scene {
         }
         this.landingTriggered = false;
 
-        // --- Twin laser blasters ---
-        this.laserBeams = new LaserBeams(this, this.ship, this.obstacleLayer);
+        // --- Bullet texture (short bright streak) ---
+        if (!this.textures.exists('ship_bullet')) {
+            const g = this.add.graphics();
+            g.fillStyle(0x88ddff, 1);   // glow halo
+            g.fillRect(0, 0, 10, 4);
+            g.fillStyle(0xffffff, 1);   // bright core
+            g.fillRect(1, 1, 8, 2);
+            g.generateTexture('ship_bullet', 10, 4);
+            g.destroy();
+        }
+
+        // --- Player bullet pool ---
+        this.playerBullets = new BulletPool(this, {
+            textureKey:    'ship_bullet',
+            defaultSpeed:  SHIP_BULLET_SPEED,
+                defaultDamage: SHIP_BULLET_DAMAGE,
+                    maxSize:       SHIP_BULLET_MAX_POOL,
+        });
+
+        // Bullets die on obstacle tiles. Destructable tiles also break.
+        this.physics.add.collider(this.playerBullets.group, this.obstacleLayer, (bullet, tile) => {
+            if (tile.properties && tile.properties.destructable) {
+                this.destroyTile(tile);
+            }
+            this.playerBullets.deactivate(bullet);
+        });
+
+        this.lastShotTime = 0;
 
         // --- Turrets ---
         this.turrets = [];
@@ -251,7 +281,36 @@ export class Level1Scene extends Phaser.Scene {
             this.cursors.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].value > 0.5)
         );
-        this.laserBeams.update(time, firing, this.shipFacing);
+        if (firing && time - this.lastShotTime >= SHIP_BULLET_COOLDOWN_MS) {
+            this.lastShotTime = time;
+            const sx = this.ship.x + LASER_EMITTER_X_OFFSET * this.shipFacing;
+            // Twin guns: one above, one below.
+            this.playerBullets.fire(sx, this.ship.y - LASER_EMITTER_Y_OFFSET, this.shipFacing, 0);
+            this.playerBullets.fire(sx, this.ship.y + LASER_EMITTER_Y_OFFSET, this.shipFacing, 0);
+        }
+
+        // --- Bullet bookkeeping: turret hits + offscreen cleanup ---
+        for (const bullet of this.playerBullets.group.getChildren()) {
+            if (!bullet.active) { continue; }
+
+            // Did it hit a turret?
+            let consumed = false;
+            for (const t of this.turrets) {
+                if (t.containsPoint(bullet.x, bullet.y)) {
+                    t.hit(SHIP_BULLET_DAMAGE);
+                    this.playerBullets.deactivate(bullet);
+                    consumed = true;
+                    break;
+                }
+            }
+            if (consumed) { continue; }
+
+            // Off the world edge? Recycle so the pool doesn't fill up.
+            if (bullet.x < 0 || bullet.x > this.worldW) {
+                this.playerBullets.deactivate(bullet);
+            }
+        }
+
         // --- Turrets
         for (const t of this.turrets) {
             t.update(this.ship);
@@ -314,6 +373,43 @@ export class Level1Scene extends Phaser.Scene {
 
     isLandingUnlocked() {
         return this.turrets.every(t => !t.alive);
+    }
+
+    destroyTile(tile) {
+        const idx = tile.properties.destroyedIndex;
+
+        // No replacement specified → clear the tile entirely.
+        if (idx === undefined || idx < 0) {
+            this.obstacleLayer.removeTileAt(tile.x, tile.y);
+            return;
+        }
+
+        // Tiled tile IDs are 0-indexed within the tileset; Phaser map indexes
+        // are firstgid-offset across the whole map. Translate before placing.
+        const firstgid = tile.tileset ? tile.tileset.firstgid : 1;
+        const newTile  = this.obstacleLayer.putTileAt(idx + firstgid, tile.x, tile.y);
+
+        if (newTile) {
+            // putTileAt swaps the tile index but leaves stale properties behind.
+            // Pull fresh properties straight from the tileset.
+            const tileset = tile.tileset;
+            const tsProps = (tileset && tileset.getTileProperties)
+            ? tileset.getTileProperties(idx + firstgid)
+            : null;
+            newTile.properties = tsProps ? { ...tsProps } : {};
+
+            const isObstacle = !!newTile.properties.obstacle;
+            newTile.collideLeft  = isObstacle;
+            newTile.collideRight = isObstacle;
+            newTile.collideUp    = isObstacle;
+            newTile.collideDown  = isObstacle;
+            newTile.faceLeft     = isObstacle;
+            newTile.faceRight    = isObstacle;
+            newTile.faceTop      = isObstacle;
+            newTile.faceBottom   = isObstacle;
+
+            this.obstacleLayer.calculateFacesAt(newTile.x, newTile.y);
+        }
     }
 
 triggerLanding(zone) {
