@@ -136,7 +136,7 @@ export const enemyTypes = {
 };
 
 // ─────────────────────────────────────────────
-//  LEVEL 1 — URIDIUM-STYLE SHIP
+//  LEVEL 1 — MANTA
 // ─────────────────────────────────────────────
 export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
 export const SHIP_FLIP_DURATION  = 450;  // ms — visual flip tween length
@@ -150,7 +150,7 @@ export const SHIP_GEAR_DOWN_MS = 30;   // ms between gear-down ticks (braking)
 export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
 export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map edge
 // ─────────────────────────────────────────────
-//  LEVEL 1 — SHIP BULLETS
+//  LEVEL 1 — MANTA BULLETS
 // ─────────────────────────────────────────────
 export const LASER_EMITTER_X_OFFSET = 5;   // px forward of ship centre (to the nose)
 export const LASER_EMITTER_Y_OFFSET = 12;   // px above/below ship centre (twin guns)
@@ -158,3 +158,14 @@ export const SHIP_BULLET_COOLDOWN_MS = 80;    // ms between shots
 export const SHIP_BULLET_SPEED       = 1200;  // px/sec
 export const SHIP_BULLET_DAMAGE      = 1;
 export const SHIP_BULLET_MAX_POOL    = 80;
+// ─────────────────────────────────────────────
+//  LEVEL 1 — TURRET BULLETS
+// ─────────────────────────────────────────────
+export const TURRET_FIRE_COOLDOWN_MS = 1800;  // ms between volleys
+export const TURRET_TWIN_GAP_MS      = 0;   // ms between left & right gun of a volley
+export const TURRET_FIRE_RANGE       = 600;   // px — don't fire if player further than this
+export const TURRET_BULLET_SPEED     = 350;   // px/sec
+export const TURRET_BULLET_DAMAGE    = 20;
+export const TURRET_BULLET_MAX_POOL  = 40;
+export const TURRET_BARREL_LENGTH    = 20;    // px — cannon pivot to barrel tip
+export const TURRET_GUN_HALF_GAP     = 6;     // px — half-distance between the two barrels

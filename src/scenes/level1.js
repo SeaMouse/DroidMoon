@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
+import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
 import { BulletPool } from '../systems.js';
 import {
@@ -8,8 +9,9 @@ import {
     SHIP_INITIAL_FACING,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
     SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
-    LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,    // still useful as gun offsets
+    LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,
     SHIP_BULLET_COOLDOWN_MS, SHIP_BULLET_SPEED, SHIP_BULLET_DAMAGE, SHIP_BULLET_MAX_POOL,
+    TURRET_BULLET_SPEED, TURRET_BULLET_DAMAGE, TURRET_BULLET_MAX_POOL,   // ← new
 } from '../config.js';
 
 export class Level1Scene extends Phaser.Scene {
@@ -26,6 +28,11 @@ export class Level1Scene extends Phaser.Scene {
     }
 
     create() {
+        // --- Run state ---
+        state.playerEnergy    = PLAYER_MAX_ENERGY;   // explicit reset, in case we ever bypass TitleScene
+        this.gameOver         = false;
+        this.playerInvincible = false;
+
         // --- Tilemap ---
         const map     = this.make.tilemap({ key: 'ship_exterior' });
         const tileset = map.addTilesetImage('tiles', 'tiles');
@@ -128,6 +135,37 @@ export class Level1Scene extends Phaser.Scene {
             this.playerBullets.deactivate(bullet);
         });
 
+        // --- Turret bullet texture (small red orb) ---
+        if (!this.textures.exists('turret_bullet')) {
+            const g = this.add.graphics();
+            g.fillStyle(0xff4444, 1);
+            g.fillCircle(4, 4, 4);
+            g.fillStyle(0xffddaa, 1);
+            g.fillCircle(4, 4, 2);
+            g.generateTexture('turret_bullet', 8, 8);
+            g.destroy();
+        }
+
+        // --- Turret bullet pool ---
+        this.turretBullets = new BulletPool(this, {
+            textureKey:    'turret_bullet',
+            defaultSpeed:  TURRET_BULLET_SPEED,
+                defaultDamage: TURRET_BULLET_DAMAGE,
+                    maxSize:       TURRET_BULLET_MAX_POOL,
+        });
+
+        // Turret bullets die on obstacle tiles.
+        this.physics.add.collider(this.turretBullets.group, this.obstacleLayer, (bullet) => {
+            this.turretBullets.deactivate(bullet);
+        });
+
+        // Turret bullets hitting the ship → damage.
+        this.physics.add.overlap(this.ship, this.turretBullets.group, (_ship, bullet) => {
+            const dmg = bullet.getData('damage') ?? 1;
+            this.turretBullets.deactivate(bullet);
+            this.applyDamageToShip(dmg);
+        });
+
         this.lastShotTime = 0;
 
         // --- Turrets ---
@@ -161,10 +199,14 @@ export class Level1Scene extends Phaser.Scene {
             backgroundColor: '#000000aa',
             padding: { x: 4, y: 2 }
         }).setScrollFactor(0).setDepth(100);
+
+        this.createShipHUD();
     }
 
     update(time, delta) {
         if (this.landingTriggered) { return; }
+        if (this.gameOver)         { return; }   // ← add this line
+
         // Defensive: if delta is missing or absurd, fall back to a sensible default.
         if (delta === undefined || isNaN(delta) || delta > 100) {
             delta = 16.67;
@@ -316,7 +358,22 @@ export class Level1Scene extends Phaser.Scene {
 
         // --- Turrets
         for (const t of this.turrets) {
-            t.update(this.ship);
+            t.update(this.ship, time);
+        }
+
+        // --- Turret bullet bookkeeping: offscreen cleanup ---
+        {
+            const cam    = this.cameras.main;
+            const margin = 50;
+            for (const bullet of this.turretBullets.group.getChildren()) {
+                if (!bullet.active) { continue; }
+                if (bullet.x < cam.scrollX - margin ||
+                    bullet.x > cam.scrollX + cam.width + margin ||
+                    bullet.y < cam.scrollY - margin ||
+                    bullet.y > cam.scrollY + cam.height + margin) {
+                    this.turretBullets.deactivate(bullet);
+                    }
+            }
         }
 
         // --- Debug overlay ---
@@ -435,4 +492,89 @@ triggerLanding(zone) {
         this.scene.start('GameScene');
     });
 }
+
+createShipHUD() {
+    const BAR_W = 120;
+    const BAR_H = 8;
+    const BAR_X = 800 - 12 - BAR_W;   // 12px in from the right edge
+    const BAR_Y = 24;
+
+    this.add.text(BAR_X, BAR_Y - 12, 'ENERGY', {
+        fontFamily: 'monospace', fontSize: '10px', fill: '#aaffcc'
+    }).setScrollFactor(0).setDepth(100);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x222233, 1);
+    bg.fillRect(BAR_X, BAR_Y, BAR_W, BAR_H);
+    bg.setScrollFactor(0).setDepth(100);
+
+    this.energyBarFill = this.add.graphics();
+    this.energyBarFill.setScrollFactor(0).setDepth(101);
+
+    // Stash geometry so updateShipHUD doesn't need to recompute it.
+    this._hudBar = { x: BAR_X, y: BAR_Y, w: BAR_W, h: BAR_H };
+
+    this.updateShipHUD();
+}
+
+updateShipHUD() {
+    if (!this.energyBarFill) { return; }
+    const pct = Math.max(0, state.playerEnergy / PLAYER_MAX_ENERGY);
+
+    let colour;
+    if      (pct > 0.5)  { colour = 0x00dd55; }
+    else if (pct > 0.25) { colour = 0xffcc00; }
+    else                 { colour = 0xff2244; }
+
+    const b = this._hudBar;
+    this.energyBarFill.clear();
+    this.energyBarFill.fillStyle(colour, 1);
+    this.energyBarFill.fillRect(b.x, b.y, Math.round(b.w * pct), b.h);
+}
+
+applyDamageToShip(damage) {
+    if (this.playerInvincible || this.gameOver) { return; }
+
+    state.playerEnergy = Math.max(0, state.playerEnergy - damage);
+    this.updateShipHUD();
+
+    if (state.playerEnergy <= 0) {
+        this.triggerShipGameOver();
+        return;
+    }
+
+    // Hit-flash + brief invincibility.
+    this.playerInvincible = true;
+    this.tweens.add({
+        targets:    this.ship,
+        alpha:      0.3,
+        duration:   100,
+        yoyo:       true,
+        repeat:     5,
+        onComplete: () => { this.ship.setAlpha(1); },
+    });
+    this.time.delayedCall(INVINCIBILITY_MS, () => {
+        this.playerInvincible = false;
+    });
+}
+
+triggerShipGameOver() {
+    this.gameOver = true;
+    this.tweens.killTweensOf(this.ship);
+    this.ship.body.setVelocity(0, 0);
+    this.ship.setAlpha(0.3);
+
+    this.add.rectangle(400, 300, 460, 90, 0x000000, 0.75)
+    .setScrollFactor(0).setDepth(200);
+    this.add.text(400, 300, 'SHIP DESTROYED', {
+        fontFamily: 'monospace', fontSize: '28px',
+        fill: '#ff3344', stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+    this.cameras.main.fadeOut(1500, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.scene.start('EndScene', { result: 'lost' });
+    });
+}
+
 }
