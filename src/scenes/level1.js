@@ -305,10 +305,13 @@ export class Level1Scene extends Phaser.Scene {
             }
             if (consumed) { continue; }
 
-            // Off the world edge? Recycle so the pool doesn't fill up.
-            if (bullet.x < 0 || bullet.x > this.worldW) {
+            // Off camera? Recycle so the pool doesn't fill up.
+            const cam    = this.cameras.main;
+            const margin = 50;
+            if (bullet.x < cam.scrollX - margin ||
+                bullet.x > cam.scrollX + cam.width + margin) {
                 this.playerBullets.deactivate(bullet);
-            }
+                }
         }
 
         // --- Turrets

@@ -157,4 +157,4 @@ export const LASER_EMITTER_Y_OFFSET = 12;   // px above/below ship centre (twin 
 export const SHIP_BULLET_COOLDOWN_MS = 80;    // ms between shots
 export const SHIP_BULLET_SPEED       = 1200;  // px/sec
 export const SHIP_BULLET_DAMAGE      = 1;
-export const SHIP_BULLET_MAX_POOL    = 50;
+export const SHIP_BULLET_MAX_POOL    = 80;
