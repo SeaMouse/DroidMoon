@@ -13,7 +13,11 @@ const config = {
     pixelArt: true,
     physics: {
         default: 'arcade',
-            arcade: { debug: false }
+            arcade: {
+                debug: false,
+                fps: 60,
+                fixedStep: true,
+            }
     },
     input: {
         gamepad: true

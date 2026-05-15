@@ -122,7 +122,6 @@ export class Level1Scene extends Phaser.Scene {
 
         // ─── CHANGED ───
         this.cameras.main.startFollow(this.ship, true, 1, 1);
-        // Camera is now positioned manually at the end of update() instead.
 
         this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -266,6 +265,7 @@ export class Level1Scene extends Phaser.Scene {
                                'flipping: ' + (this.shipFlipping ? 'YES (' + this.shipFlipPhase + ' ' + this.shipFlipProgress.toFixed(2) + ')' : 'no'),
                                'shift:    ' + Math.round(this.shipGearShiftTimer) + ' ms',
                                'world vx: ' + worldVx.toFixed(1),
+                               'turrets: ' + this.turrets.filter(t => t.alive).length + ' / ' + this.turrets.length,
         ].join('\n'));
     }
 
@@ -312,10 +312,9 @@ export class Level1Scene extends Phaser.Scene {
     }
 
 
-isLandingUnlocked() {
-    // Future: return false until ship defenses are destroyed.
-    return true;
-}
+    isLandingUnlocked() {
+        return this.turrets.every(t => !t.alive);
+    }
 
 triggerLanding(zone) {
     this.landingTriggered = true;

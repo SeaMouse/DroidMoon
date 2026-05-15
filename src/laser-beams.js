@@ -54,16 +54,25 @@ export class LaserBeams {
     // Walk forward in small steps until we hit an obstacle tile or the screen edge.
     // Beam is horizontal, so we only need to step X.
     raycast(startX, startY, facing, limitX) {
+        const turrets = this.scene.turrets || [];
         let x = startX;
         while ((facing > 0 && x < limitX) || (facing < 0 && x > limitX)) {
             x += facing * LASER_RAYCAST_STEP;
+
+            // Turrets first — they sit on top of the hull.
+            for (const t of turrets) {
+                if (t.containsPoint(x, startY)) {
+                    t.hit(1);
+                    return x;
+                }
+            }
+
             const tile = this.obstacleLayer.getTileAtWorldXY(x, startY);
             if (tile && tile.properties && tile.properties.obstacle) {
-                // if it's destructible, swap it for the damaged version
                 if (tile.properties.destructable) {
                     this.destroyTile(tile);
                 }
-                return x;  // hit point — close enough for visuals
+                return x;
             }
         }
         return limitX;
