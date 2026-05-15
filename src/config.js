@@ -28,6 +28,8 @@ export const LIGHT_BAND_ERASE_ALPHA = 0.35;
 
 export const DIM_COLOUR = 0x444466;
 
+export const DEBUG_LOGS = false;
+
 // ─────────────────────────────────────────────
 //  DECK DEFINITIONS
 // ─────────────────────────────────────────────
@@ -135,6 +137,21 @@ export const enemyTypes = {
         weight:        8,
     },
 };
+
+// ─────────────────────────────────────────────
+//  COMBAT TUNING
+// ─────────────────────────────────────────────
+export const AIM_LASER_MAX_RANGE       = 150;  // px — visual reach of the right-stick laser
+export const PLAYER_SPRITE_RADIUS      = 16;   // px — matches the player texture radius
+
+export const PLAYER_KNOCKBACK_SPEED    = 220;  // px/sec when bounced off an enemy
+export const ENEMY_PUSH_MAX_SPEED      = 200;  // px/sec when player rams a lighter enemy
+export const PLAYER_KNOCKBACK_MS       = 150;  // ms the enemy's AI pauses after a player ram
+
+export const ENEMY_BOUNCE_SPEED        = 100;  // px/sec on enemy-enemy collision
+export const ENEMY_BOUNCE_COOLDOWN_MS  = 220;  // ms before two enemies can bounce again
+
+export const CONE_RAY_COUNT            = 24;   // resolution of the visibility cone
 
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA

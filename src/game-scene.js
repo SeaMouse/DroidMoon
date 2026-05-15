@@ -20,6 +20,7 @@ import {
     drawDebugWallSegments, drawDebugRays, drawDebugVisibilityPolygon,
     drawDebugNavStatic, drawDebugNavDynamic,
     drawAimLaser,
+    debugLog
 } from './systems.js';
 
 export class GameScene extends Phaser.Scene {
@@ -138,7 +139,7 @@ export class GameScene extends Phaser.Scene {
             if (arrivalLift) {
                 state.player.setPosition(arrivalLift.x, arrivalLift.y);
                 Lifts.inputGated = true;
-                console.log('LIFTS: Arrived on ' + state.currentDeck +
+                debugLog('LIFTS: Arrived on ' + state.currentDeck +
                 ' at lift connecting to ' + state.lastDeck + '.');
             } else {
                 console.warn('LIFTS: No lift on ' + state.currentDeck +

@@ -1,10 +1,9 @@
 // ─────────────────────────────────────────────
 //  GAMEPLAY SYSTEMS
 // ─────────────────────────────────────────────
-//  Wave 1: classes, nav graph, raycasting, lighting, tile helpers.
-//  Wave 2 will add lifts, HUD, deck state, combat handlers, debug.
+//  Shared classes and helpers: bullets, nav graph, raycasting,
+//  lighting, lifts, HUD, deck state, combat, debug overlays.
 // ─────────────────────────────────────────────
-
 import Phaser from 'phaser';
 import {
     TILE_SIZE, PLAYER_WEIGHT,
@@ -15,7 +14,10 @@ import {
     FOG_DARKNESS, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
-    INPUT_DEAD_ZONE
+    AIM_LASER_MAX_RANGE, PLAYER_SPRITE_RADIUS, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
+    PLAYER_KNOCKBACK_MS, ENEMY_BOUNCE_SPEED, ENEMY_BOUNCE_COOLDOWN_MS, CONE_RAY_COUNT,
+    INPUT_DEAD_ZONE,
+    DEBUG_LOGS
 } from './config.js';
 import { state } from './state.js';
 
@@ -27,6 +29,10 @@ export function tileToPixel(tileCoord) {
         x: tileCoord.x * TILE_SIZE + TILE_SIZE / 2,
         y: tileCoord.y * TILE_SIZE + TILE_SIZE / 2
     };
+}
+
+export function debugLog(...args) {
+    if (DEBUG_LOGS) { debugLog(...args); }
 }
 
 export function makeCircleTexture(scene, key, colour, diameter) {
@@ -86,10 +92,10 @@ export class BulletPool {
 export function buildNavGraph(map) {
     state.navNodes = [];
 
-    console.log('NAV: All layers found by Phaser:');
-    map.layers.forEach(l => console.log('  tile layer:', l.name));
+    debugLog('NAV: All layers found by Phaser:');
+    map.layers.forEach(l => debugLog('  tile layer:', l.name));
     if (map.objects) {
-        map.objects.forEach(l => console.log('  object layer:', l.name));
+        map.objects.forEach(l => debugLog('  object layer:', l.name));
     }
 
     let objLayer = map.getObjectLayer('Waypoints');
@@ -99,7 +105,7 @@ export function buildNavGraph(map) {
         ? map.objects.find(l => l.name === 'Waypoints')
         : null;
         if (raw) {
-            console.log('NAV: Found Waypoints via map.objects fallback.');
+            debugLog('NAV: Found Waypoints via map.objects fallback.');
             objLayer = raw;
         }
     }
@@ -113,7 +119,7 @@ export function buildNavGraph(map) {
         state.navNodes.push({ id: index, x: obj.x, y: obj.y, neighbours: [] });
     });
 
-    console.log('NAV: Found ' + state.navNodes.length + ' waypoint objects.');
+    debugLog('NAV: Found ' + state.navNodes.length + ' waypoint objects.');
 
     for (let i = 0; i < state.navNodes.length; i++) {
         for (let j = i + 1; j < state.navNodes.length; j++) {
@@ -128,7 +134,7 @@ export function buildNavGraph(map) {
     }
 
     const totalLinks = state.navNodes.reduce((sum, n) => sum + n.neighbours.length, 0) / 2;
-    console.log('NAV: Graph built — ' + state.navNodes.length + ' nodes, ' + totalLinks + ' connections.');
+    debugLog('NAV: Graph built — ' + state.navNodes.length + ' nodes, ' + totalLinks + ' connections.');
 
     if (totalLinks === 0 && state.navNodes.length > 1) {
         console.warn('NAV: No connections formed! Nodes may be more than ' + NODE_CONNECT_DIST + 'px apart, or walls are blocking LOS.');
@@ -395,9 +401,8 @@ export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle
     h = castClamped(facing + halfAngle);
     hits.push({ x: h.x, y: h.y, rel:  halfAngle });
 
-    const ARC_RAY_COUNT = 24;
-    for (let i = 1; i < ARC_RAY_COUNT; i++) {
-        const rel = -halfAngle + (i / ARC_RAY_COUNT) * (2 * halfAngle);
+    for (let i = 1; i < CONE_RAY_COUNT; i++) {
+        const rel = -halfAngle + (i / CONE_RAY_COUNT) * (2 * halfAngle);
         const hit = castClamped(facing + rel);
         hits.push({ x: hit.x, y: hit.y, rel: rel });
     }
@@ -650,7 +655,7 @@ export function parseLiftZones(map) {
     }
 
     if (!objLayer) {
-        console.log('LIFTS: No "Lifts" object layer found on this deck.');
+        debugLog('LIFTS: No "Lifts" object layer found on this deck.');
         return;
     }
 
@@ -695,7 +700,7 @@ export function parseLiftZones(map) {
         });
     }
 
-    console.log('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + state.currentDeck + '.');
+    debugLog('LIFTS: Parsed ' + Lifts.zones.length + ' lift zone(s) on ' + state.currentDeck + '.');
 }
 
 export function findPlayerLiftOverlap() {
@@ -791,7 +796,7 @@ export function saveDeckState(deckName) {
         cleared: wasCleared || false,
     };
 
-    console.log('STATE: Saved ' + saved.length + ' enemy(s) for ' + deckName + '.');
+    debugLog('STATE: Saved ' + saved.length + ' enemy(s) for ' + deckName + '.');
 }
 
 function restoreEnemiesFromState(deckState) {
@@ -822,11 +827,11 @@ function spawnFreshEnemies(enemyDefs) {
 
 export function spawnEnemiesForDeck(deckName) {
     if (state.deckStates[deckName]) {
-        console.log('STATE: Restoring saved enemies for ' + deckName + '.');
+        debugLog('STATE: Restoring saved enemies for ' + deckName + '.');
         restoreEnemiesFromState(state.deckStates[deckName]);
     } else {
         const deckDef = deckDefinitions[deckName];
-        console.log('STATE: Spawning ' + deckDef.enemies.length + ' fresh enemy(s) for ' + deckName + '.');
+        debugLog('STATE: Spawning ' + deckDef.enemies.length + ' fresh enemy(s) for ' + deckName + '.');
         spawnFreshEnemies(deckDef.enemies);
     }
 }
@@ -881,7 +886,7 @@ function triggerDeckShutdown() {
     applyDeckDim();
     showDeckClearedMessage();
 
-    console.log('SHUTDOWN: ' + state.currentDeck + ' cleared — lights out.');
+    debugLog('SHUTDOWN: ' + state.currentDeck + ' cleared — lights out.');
 }
 
 function showDeckClearedMessage() {
@@ -1066,21 +1071,19 @@ export function onPlayerEnemyCollide(playerSprite, enemySprite) {
         const nx   = dx / dist;
         const ny   = dy / dist;
 
-        const PLAYER_BOUNCE = 220;
         playerSprite.setVelocity(
-            -nx * PLAYER_BOUNCE * (wEnemy / total),
-                                 -ny * PLAYER_BOUNCE * (wEnemy / total)
+            -nx * PLAYER_KNOCKBACK_SPEED * (wEnemy / total),
+                                 -ny * PLAYER_KNOCKBACK_SPEED * (wEnemy / total)
         );
 
         if (wEnemy < PLAYER_WEIGHT) {
-            const MAX_PUSH   = 200;
             const pushFactor = (PLAYER_WEIGHT - wEnemy) / PLAYER_WEIGHT;
             enemySprite.setVelocity(
-                nx * pushFactor * MAX_PUSH,
-                ny * pushFactor * MAX_PUSH
+                nx * pushFactor * ENEMY_PUSH_MAX_SPEED,
+                ny * pushFactor * ENEMY_PUSH_MAX_SPEED
             );
 
-            enemy.knockbackUntil = state.scene.time.now + 150;
+            enemy.knockbackUntil = state.scene.time.now + PLAYER_KNOCKBACK_MS;
             reverseEnemyCourse(enemy);
         }
     }
@@ -1104,16 +1107,14 @@ export function onEnemyEnemyCollide(spriteA, spriteB) {
     const nx   = dx / dist;
     const ny   = dy / dist;
 
-    const BOUNCE = 100;
-    spriteA.setVelocity(-nx * BOUNCE * (wB / total), -ny * BOUNCE * (wB / total));
-    spriteB.setVelocity( nx * BOUNCE * (wA / total),  ny * BOUNCE * (wA / total));
+    spriteA.setVelocity(-nx * ENEMY_BOUNCE_SPEED * (wB / total), -ny * ENEMY_BOUNCE_SPEED * (wB / total));
+    spriteB.setVelocity( nx * ENEMY_BOUNCE_SPEED * (wA / total),  ny * ENEMY_BOUNCE_SPEED * (wA / total));
 
-    const COOLDOWN_MS = 220;
-    enemyA.bounceCooldown = now + COOLDOWN_MS;
-    enemyB.bounceCooldown = now + COOLDOWN_MS;
+    enemyA.bounceCooldown = now + ENEMY_BOUNCE_COOLDOWN_MS;
+    enemyB.bounceCooldown = now + ENEMY_BOUNCE_COOLDOWN_MS;
 
-    enemyA.knockbackUntil = now + COOLDOWN_MS;
-    enemyB.knockbackUntil = now + COOLDOWN_MS;
+    enemyA.knockbackUntil = now + ENEMY_BOUNCE_COOLDOWN_MS;
+    enemyB.knockbackUntil = now + ENEMY_BOUNCE_COOLDOWN_MS;
 
     reverseEnemyCourse(enemyA);
     reverseEnemyCourse(enemyB);
@@ -1129,19 +1130,17 @@ export function drawAimLaser(rsOut, rsx, rsy) {
     if (!rsOut || isDeckCleared()) { return; }
 
     const angle         = Math.atan2(rsy, rsx);
-    const PLAYER_RADIUS = 16;
-    const MAX_RANGE     = 150;
 
     // Start at the player's circumference, not the centre.
-    const startX = state.player.x + Math.cos(angle) * PLAYER_RADIUS;
-    const startY = state.player.y + Math.sin(angle) * PLAYER_RADIUS;
+    const startX = state.player.x + Math.cos(angle) * PLAYER_SPRITE_RADIUS;
+    const startY = state.player.y + Math.sin(angle) * PLAYER_SPRITE_RADIUS;
 
-    // Find where the beam should end: MAX_RANGE, or sooner if a wall blocks it.
+    // Find where the beam should end: AIM_LASER_MAX_RANGE, or sooner if a wall blocks it.
     const hit        = castRay(startX, startY, angle);
     const distToWall = Phaser.Math.Distance.Between(startX, startY, hit.x, hit.y);
-    const drawLength = Math.min(MAX_RANGE, distToWall);
+    const drawLength = Math.min(AIM_LASER_MAX_RANGE, distToWall);
 
-    // Fade is anchored to MAX_RANGE so the gradient rate stays constant
+    // Fade is anchored to AIM_LASER_MAX_RANGE so the gradient rate stays constant
     // even when the beam is cut short by a wall.
     const SEGMENTS = 20;
     for (let i = 0; i < SEGMENTS; i++) {
@@ -1154,8 +1153,8 @@ export function drawAimLaser(rsOut, rsx, rsy) {
         const x2 = startX + Math.cos(angle) * d2;
         const y2 = startY + Math.sin(angle) * d2;
 
-        // Alpha is based on absolute distance / MAX_RANGE, not segment index.
-        const alpha = (1 - d1 / MAX_RANGE) * 0.7;
+        // Alpha is based on absolute distance / AIM_LASER_MAX_RANGE, not segment index.
+        const alpha = (1 - d1 / AIM_LASER_MAX_RANGE) * 0.7;
 
         state.aimLaser.lineStyle(2, 0xff4444, alpha);
         state.aimLaser.beginPath();
