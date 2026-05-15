@@ -15,6 +15,7 @@ import {
     FOG_DARKNESS, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
+    INPUT_DEAD_ZONE
 } from './config.js';
 import { state } from './state.js';
 
@@ -26,6 +27,15 @@ export function tileToPixel(tileCoord) {
         x: tileCoord.x * TILE_SIZE + TILE_SIZE / 2,
         y: tileCoord.y * TILE_SIZE + TILE_SIZE / 2
     };
+}
+
+export function makeCircleTexture(scene, key, colour, diameter) {
+    if (scene.textures.exists(key)) { return; }
+    const g = scene.add.graphics();
+    g.fillStyle(colour, 1);
+    g.fillCircle(diameter / 2, diameter / 2, diameter / 2);
+    g.generateTexture(key, diameter, diameter);
+    g.destroy();
 }
 
 // ─────────────────────────────────────────────
@@ -700,13 +710,12 @@ export function findPlayerLiftOverlap() {
 }
 
 export function updateLiftHold(time, pad) {
-    const DEAD_ZONE = 0.15;
     let holdInput = false;
 
     if (pad) {
         const RSX = pad.rightStick.x;
         const RSY = pad.rightStick.y;
-        holdInput = (Math.abs(RSX) > DEAD_ZONE || Math.abs(RSY) > DEAD_ZONE);
+        holdInput = (Math.abs(RSX) > INPUT_DEAD_ZONE || Math.abs(RSY) > INPUT_DEAD_ZONE);
     }
 
     if (state.keys.f.isDown) { holdInput = true; }

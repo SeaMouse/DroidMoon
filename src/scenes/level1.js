@@ -11,7 +11,8 @@ import {
     SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
     LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,
     SHIP_BULLET_COOLDOWN_MS, SHIP_BULLET_SPEED, SHIP_BULLET_DAMAGE, SHIP_BULLET_MAX_POOL,
-    TURRET_BULLET_SPEED, TURRET_BULLET_DAMAGE, TURRET_BULLET_MAX_POOL,   // ← new
+    TURRET_BULLET_SPEED, TURRET_BULLET_DAMAGE, TURRET_BULLET_MAX_POOL,
+    INPUT_DEAD_ZONE
 } from '../config.js';
 
 export class Level1Scene extends Phaser.Scene {
@@ -30,8 +31,8 @@ export class Level1Scene extends Phaser.Scene {
     create() {
         // --- Run state ---
         state.playerEnergy    = PLAYER_MAX_ENERGY;   // explicit reset, in case we ever bypass TitleScene
-        this.gameOver         = false;
-        this.playerInvincible = false;
+        state.gameOver         = false;
+        state.playerInvincible = false;
 
         // --- Tilemap ---
         const map     = this.make.tilemap({ key: 'ship_exterior' });
@@ -123,8 +124,8 @@ export class Level1Scene extends Phaser.Scene {
         this.playerBullets = new BulletPool(this, {
             textureKey:    'ship_bullet',
             defaultSpeed:  SHIP_BULLET_SPEED,
-                defaultDamage: SHIP_BULLET_DAMAGE,
-                    maxSize:       SHIP_BULLET_MAX_POOL,
+            defaultDamage: SHIP_BULLET_DAMAGE,
+            maxSize:       SHIP_BULLET_MAX_POOL,
         });
 
         // Bullets die on obstacle tiles. Destructable tiles also break.
@@ -150,8 +151,8 @@ export class Level1Scene extends Phaser.Scene {
         this.turretBullets = new BulletPool(this, {
             textureKey:    'turret_bullet',
             defaultSpeed:  TURRET_BULLET_SPEED,
-                defaultDamage: TURRET_BULLET_DAMAGE,
-                    maxSize:       TURRET_BULLET_MAX_POOL,
+            defaultDamage: TURRET_BULLET_DAMAGE,
+            maxSize:       TURRET_BULLET_MAX_POOL,
         });
 
         // Turret bullets die on obstacle tiles.
@@ -205,7 +206,7 @@ export class Level1Scene extends Phaser.Scene {
 
     update(time, delta) {
         if (this.landingTriggered) { return; }
-        if (this.gameOver)         { return; }   // ← add this line
+        if (state.gameOver) { return; }
 
         // Defensive: if delta is missing or absurd, fall back to a sensible default.
         if (delta === undefined || isNaN(delta) || delta > 100) {
@@ -215,19 +216,18 @@ export class Level1Scene extends Phaser.Scene {
 
         // --- Read input as -1 / 0 / +1 on each axis ---
         const pad = this.input.gamepad ? this.input.gamepad.getPad(0) : null;
-        const DEAD_ZONE = 0.15;
 
         let horizInput = 0;
         if (this.cursors.right.isDown) { horizInput += 1; }
         if (this.cursors.left.isDown)  { horizInput -= 1; }
-        if (pad && Math.abs(pad.leftStick.x) > DEAD_ZONE) {
+        if (pad && Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE) {
             horizInput = pad.leftStick.x > 0 ? 1 : -1;
         }
 
         let vertInput = 0;
         if (this.cursors.down.isDown) { vertInput += 1; }
         if (this.cursors.up.isDown)   { vertInput -= 1; }
-        if (pad && Math.abs(pad.leftStick.y) > DEAD_ZONE) {
+        if (pad && Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE) {
             vertInput = pad.leftStick.y > 0 ? 1 : -1;
         }
 
@@ -533,7 +533,7 @@ updateShipHUD() {
 }
 
 applyDamageToShip(damage) {
-    if (this.playerInvincible || this.gameOver) { return; }
+    if (state.playerInvincible || state.gameOver) { return; }
 
     state.playerEnergy = Math.max(0, state.playerEnergy - damage);
     this.updateShipHUD();
@@ -544,7 +544,7 @@ applyDamageToShip(damage) {
     }
 
     // Hit-flash + brief invincibility.
-    this.playerInvincible = true;
+    state.playerInvincible = true;
     this.tweens.add({
         targets:    this.ship,
         alpha:      0.3,
@@ -554,12 +554,12 @@ applyDamageToShip(damage) {
         onComplete: () => { this.ship.setAlpha(1); },
     });
     this.time.delayedCall(INVINCIBILITY_MS, () => {
-        this.playerInvincible = false;
+        state.playerInvincible = false;
     });
 }
 
 triggerShipGameOver() {
-    this.gameOver = true;
+    state.gameOver = true;
     this.tweens.killTweensOf(this.ship);
     this.ship.body.setVelocity(0, 0);
     this.ship.setAlpha(0.3);

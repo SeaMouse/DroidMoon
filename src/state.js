@@ -56,7 +56,8 @@ export function resetGameState() {
     state.currentDeck    = 'deck1';
     state.playerSpawnPos = null;
     state.lastDeck       = null;
-    state.playerEnergy   = PLAYER_MAX_ENERGY;
-    state.killCount      = 0;
-    // Note: Lifts.inputGated is reset by the Lifts module in step 4.
+    state.playerEnergy     = PLAYER_MAX_ENERGY;
+    state.killCount        = 0;
+    state.gameOver         = false;
+    state.playerInvincible = false;
 }

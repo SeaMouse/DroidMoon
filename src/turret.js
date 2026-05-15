@@ -78,8 +78,8 @@ export class Turret {
         if (this.volleyStep === 0 && inRange &&
             time - this.lastVolleyTime >= TURRET_FIRE_COOLDOWN_MS) {
             this.fireGun(0, angle);
-        this.lastVolleyTime = time;
-        this.volleyStep = 1;
+            this.lastVolleyTime = time;
+            this.volleyStep = 1;
             }
             // Step 1: 250ms after first gun → fire second gun (range no longer matters,
             //         the volley commits once it starts).

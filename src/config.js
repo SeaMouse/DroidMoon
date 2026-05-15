@@ -7,6 +7,7 @@ export const PLAYER_SPEED    = 200;
 export const PLAYER_WEIGHT   = 2;
 export const BULLET_SPEED    = 400;
 export const BULLET_COOLDOWN = 200;
+export const INPUT_DEAD_ZONE = 0.15;
 
 export const NODE_CONNECT_DIST       = 250;
 export const WANDER_BACKTRACK_CHANCE = 0.05;

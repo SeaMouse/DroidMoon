@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
 import { state } from './state.js';
 import {
-    TILE_SIZE, PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
-    PLAYER_MAX_ENERGY,
+    PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
+    PLAYER_MAX_ENERGY, INPUT_DEAD_ZONE,
     deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
 import {
-    BulletPool,
+    BulletPool, makeCircleTexture,
     Lifts, Debug,
     buildNavGraph, extractWallSegments, extractWallCorners,
     parseLiftZones, updateLiftHold,
@@ -64,13 +64,7 @@ export class GameScene extends Phaser.Scene {
         extractWallCorners();
 
         // --- Player texture ---
-        if (!this.textures.exists('player')) {
-            const playerGfx = this.add.graphics();
-            playerGfx.fillStyle(0x00ff99, 1);
-            playerGfx.fillCircle(16, 16, 16);
-            playerGfx.generateTexture('player', 32, 32);
-            playerGfx.destroy();
-        }
+        makeCircleTexture(this, 'player', 0x00ff99, 32);
 
         // --- Player spawn ---
         const spawnX = state.playerSpawnPos ? state.playerSpawnPos.x : deckDef.playerStart.x;
@@ -103,14 +97,7 @@ export class GameScene extends Phaser.Scene {
 
         // --- Enemy bullet textures ---
         for (const [weaponKey, weaponDef] of Object.entries(weaponTypes)) {
-            const texKey = 'ebullet_' + weaponKey;
-            if (!this.textures.exists(texKey)) {
-                const gfx = this.add.graphics();
-                gfx.fillStyle(weaponDef.colour, 1);
-                gfx.fillCircle(4, 4, 4);
-                gfx.generateTexture(texKey, 8, 8);
-                gfx.destroy();
-            }
+            makeCircleTexture(this, 'ebullet_' + weaponKey, weaponDef.colour, 8);
         }
 
         // --- Enemy bullet pool ---
@@ -127,13 +114,7 @@ export class GameScene extends Phaser.Scene {
 
         // --- Enemy sprite textures ---
         for (const [typeKey, typeDef] of Object.entries(enemyTypes)) {
-            if (!this.textures.exists(typeKey)) {
-                const gfx = this.add.graphics();
-                gfx.fillStyle(typeDef.colour, 1);
-                gfx.fillCircle(16, 16, 16);
-                gfx.generateTexture(typeKey, 32, 32);
-                gfx.destroy();
-            }
+            makeCircleTexture(this, typeKey, typeDef.colour, 32);
         }
 
         // --- Enemy group ---
@@ -229,13 +210,11 @@ export class GameScene extends Phaser.Scene {
 
         state.player.setVelocity(0);
 
-        const cursors = this.input.keyboard.createCursorKeys();
-        const pad     = this.input.gamepad.getPad(0);
-        const DEAD_ZONE = 0.15;
+        const pad = this.input.gamepad.getPad(0);
 
         if (pad) {
-            if (Math.abs(pad.leftStick.x) > DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
-            if (Math.abs(pad.leftStick.y) > DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
+            if (Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
+            if (Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
         }
 
         let rsx = 0, rsy = 0;
@@ -243,8 +222,8 @@ export class GameScene extends Phaser.Scene {
             rsx = pad.rightStick.x;
             rsy = pad.rightStick.y;
         }
-        const rsOut = Math.abs(rsx) > DEAD_ZONE || Math.abs(rsy) > DEAD_ZONE;
-        const lsOut = pad && (Math.abs(pad.leftStick.x) > DEAD_ZONE || Math.abs(pad.leftStick.y) > DEAD_ZONE);
+        const rsOut = Math.abs(rsx) > INPUT_DEAD_ZONE || Math.abs(rsy) > INPUT_DEAD_ZONE;
+        const lsOut = pad && (Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE || Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE);
 
         if (rsOut) {
             state.playerFacing = Math.atan2(rsy, rsx);
