@@ -170,8 +170,8 @@ export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map 
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA BULLETS
 // ─────────────────────────────────────────────
-export const LASER_EMITTER_X_OFFSET = 5;   // px forward of ship centre (to the nose)
-export const LASER_EMITTER_Y_OFFSET = 12;   // px above/below ship centre (twin guns)
+export const LASER_EMITTER_X_OFFSET = 35;   // px forward of ship centre (to the nose)
+export const LASER_EMITTER_Y_OFFSET = 23;   // px above/below ship centre (twin guns)
 export const SHIP_BULLET_COOLDOWN_MS = 80;    // ms between shots
 export const SHIP_BULLET_SPEED       = 1200;  // px/sec
 export const SHIP_BULLET_DAMAGE      = 1;

@@ -26,6 +26,14 @@ export class Level1Scene extends Phaser.Scene {
         this.load.image('turret_base', 'assets/tower01_128.png');
         this.load.image('turret_cannon', 'assets/turret_01_mk2.png');
         this.load.tilemapTiledJSON('ship_exterior', 'assets/ship_exterior.tmj');
+        this.load.spritesheet('manta_flip_start', 'assets/manta/manta_sheet_start-flip-90-0.png', {
+            frameWidth: 64,
+            frameHeight: 64,
+        });
+        this.load.spritesheet('manta_flip_end', 'assets/manta/manta_sheet_end-flip-0-90.png', {
+            frameWidth: 64,
+            frameHeight: 64,
+        });
     }
 
     create() {
@@ -60,21 +68,8 @@ export class Level1Scene extends Phaser.Scene {
         const spawnX = startPoint ? startPoint.x : 200;
         const spawnY = startPoint ? startPoint.y : this.worldH / 2;
 
-        // --- Ship texture (placeholder) ---
-        if (!this.textures.exists('ship')) {
-            const g = this.add.graphics();
-            g.fillStyle(0x44ffaa, 1);
-            g.beginPath();
-            g.moveTo(0, 0); g.lineTo(48, 16); g.lineTo(0, 32);
-            g.closePath();
-            g.fillPath();
-            g.fillStyle(0x000000, 1);
-            g.fillCircle(36, 16, 3);
-            g.generateTexture('ship', 48, 32);
-            g.destroy();
-        }
-
-        this.ship = this.physics.add.sprite(spawnX, spawnY, 'ship');
+        // --- Ship texture  ---
+        this.ship = this.physics.add.sprite(spawnX, spawnY, 'manta_flip_start', 0);
 
         // Constrain physics world to the flight band (excludes sky margins + map edges).
         this.physics.world.setBounds(
@@ -273,12 +268,24 @@ export class Level1Scene extends Phaser.Scene {
         } else if (this.shipFlipPhase === 'yaw') {
             this.shipFlipProgress += delta / SHIP_FLIP_DURATION;
 
+            // Drive the sprite frame from progress: 13 unique frames across the yaw.
+            // Frames 0–6 come from sheet 1, frames 7–12 from sheet 2 (its frame 0 is the
+            // duplicate of sheet 1's frame 6, so we skip it by offsetting -6).
+            const idx = Phaser.Math.Clamp(Math.floor(this.shipFlipProgress * 13), 0, 12);
+            if (idx <= 6) {
+                this.ship.setTexture('manta_flip_start', idx);
+            } else {
+                this.ship.setTexture('manta_flip_end', idx - 6);
+            }
+            this.ship.setFlipX(this.shipFlipStartFacing === -1);
+
             if (this.shipFlipProgress >= 1) {
                 this.shipFlipProgress = 1;
                 this.shipFacing      *= -1;
                 this.shipGear         = 1;
                 this.shipFlipPhase    = 'roll';
                 this.shipFlipProgress = 0;
+                this.ship.setTexture('manta_flip_start', 0);   // back to the static pose for roll/idle
                 this.startBarrelRoll();
             }
 
@@ -310,6 +317,9 @@ export class Level1Scene extends Phaser.Scene {
         // --- Apply motion via the physics body so collisions resolve automatically ---
         const worldVy = vertInput * SHIP_VERTICAL_SPEED;
         this.ship.body.setVelocity(worldVx, worldVy);
+        if (this.shipFlipPhase !== 'yaw') {
+            this.ship.setFlipX(this.shipFacing === -1);
+        }
 
         // --- Camera lead based on current velocity ---
         const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
@@ -389,26 +399,10 @@ export class Level1Scene extends Phaser.Scene {
     }
 
     startFlip() {
-        this.shipFlipping     = true;
-        this.shipFlipPhase    = 'yaw';
-        this.shipFlipProgress = 0;
-
-        // Phase 1 visual: squish to 0 on X, toggle flipX, squish back to 1.
-        this.tweens.add({
-            targets:  this.ship,
-            scaleX:   0,
-            duration: SHIP_FLIP_DURATION / 2,
-            ease:     'Sine.easeIn',
-            onComplete: () => {
-                this.ship.flipX = !this.ship.flipX;
-                this.tweens.add({
-                    targets:  this.ship,
-                    scaleX:   1,
-                    duration: SHIP_FLIP_DURATION / 2,
-                    ease:     'Sine.easeOut',
-                });
-            }
-        });
+        this.shipFlipping        = true;
+        this.shipFlipPhase       = 'yaw';
+        this.shipFlipProgress    = 0;
+        this.shipFlipStartFacing = this.shipFacing;   // lock the orientation for the duration of the animation
     }
 
     startBarrelRoll() {
