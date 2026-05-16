@@ -319,7 +319,7 @@ export class Level1Scene extends Phaser.Scene {
         this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
 
         // --- Twin laser fire ---
-        const firing = !this.shipFlipping && (
+        const firing = this.shipFlipPhase !== 'yaw' && (
             this.cursors.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].value > 0.5)
         );
