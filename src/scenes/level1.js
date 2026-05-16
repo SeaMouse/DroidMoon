@@ -7,6 +7,7 @@ import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
     SHIP_INITIAL_FACING,
+    SHIP_SHADOW_OFFSET_X, SHIP_SHADOW_OFFSET_Y,SHIP_SHADOW_ALPHA,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
     SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
     LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,
@@ -58,7 +59,7 @@ export class Level1Scene extends Phaser.Scene {
         map.createLayer('Starfield', tileset, 0, 0);
 
         // Hull (decorative, no collision).
-        map.createLayer('Hull', tileset, 0, 0);
+        this.hullLayer = map.createLayer('Hull', tileset, 0, 0);
 
         // Obstacles (collidable).
         this.obstacleLayer = map.createLayer('Obstacles', tileset, 0, 0);
@@ -78,6 +79,19 @@ export class Level1Scene extends Phaser.Scene {
 
         // --- Ship texture  ---
         this.ship = this.physics.add.sprite(spawnX, spawnY, 'manta_flip_start', 0);
+
+        // Cast shadow: a duplicate of the ship, tinted black and offset, masked to the hull.
+        this.shipShadow = this.add.sprite(this.ship.x, this.ship.y, this.ship.texture.key, this.ship.frame.name);
+        this.shipShadow.setTint(0x000000);
+        this.shipShadow.setAlpha(SHIP_SHADOW_ALPHA);
+
+        // Render above the tile layers (default depth 0) but below the ship.
+        this.shipShadow.setDepth(10);
+        this.ship.setDepth(11);
+
+        // Mask the shadow to the hull's footprint so it never spills onto the starfield.
+        this.shipShadow.enableFilters();
+        this.shipShadow.filters.external.addMask(this.hullLayer, false, this.cameras.main, 'world');
 
         // Constrain physics world to the flight band (excludes sky margins + map edges).
         this.physics.world.setBounds(
@@ -347,6 +361,13 @@ export class Level1Scene extends Phaser.Scene {
         const LEAD_SMOOTH = 0.05;
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
         this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
+
+        // Keep the shadow in lockstep with the ship.
+        this.shipShadow.setTexture(this.ship.texture.key, this.ship.frame.name);
+        this.shipShadow.setFlipX(this.ship.flipX);
+        this.shipShadow.setRotation(this.ship.rotation);
+        this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X;
+        this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y;
 
         // --- Twin laser fire ---
         const firing = this.shipFlipPhase !== 'yaw' && (

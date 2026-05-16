@@ -177,6 +177,12 @@ export const SHIP_BULLET_SPEED       = 1200;  // px/sec
 export const SHIP_BULLET_DAMAGE      = 1;
 export const SHIP_BULLET_MAX_POOL    = 80;
 // ─────────────────────────────────────────────
+//  LEVEL 1 — MANTA SHADOW
+// ─────────────────────────────────────────────
+export const SHIP_SHADOW_OFFSET_X = 8;     // px right of ship
+export const SHIP_SHADOW_OFFSET_Y = 14;    // px below ship
+export const SHIP_SHADOW_ALPHA    = 0.45;  // 0 = invisible, 1 = solid black
+// ─────────────────────────────────────────────
 //  LEVEL 1 — TURRET BULLETS
 // ─────────────────────────────────────────────
 export const TURRET_FIRE_COOLDOWN_MS = 1800;  // ms between volleys
