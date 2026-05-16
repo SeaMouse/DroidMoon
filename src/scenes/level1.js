@@ -34,6 +34,14 @@ export class Level1Scene extends Phaser.Scene {
             frameWidth: 64,
             frameHeight: 64,
         });
+        this.load.spritesheet('manta_roll_start', 'assets/manta/manta_sheet_start-roll-90-0.png', {
+            frameWidth: 64,
+            frameHeight: 64,
+        });
+        this.load.spritesheet('manta_roll_end', 'assets/manta/manta_sheet_end-roll-0-90.png', {
+            frameWidth: 64,
+            frameHeight: 64,
+        });
     }
 
     create() {
@@ -285,7 +293,7 @@ export class Level1Scene extends Phaser.Scene {
                 this.shipGear         = 1;
                 this.shipFlipPhase    = 'roll';
                 this.shipFlipProgress = 0;
-                this.ship.setTexture('manta_flip_start', 0);   // back to the static pose for roll/idle
+                this.ship.setTexture('manta_roll_end', 4);   // seed roll on its last forward frame (upside-down)
                 this.startBarrelRoll();
             }
 
@@ -294,10 +302,22 @@ export class Level1Scene extends Phaser.Scene {
         } else {
             this.shipFlipProgress += delta / SHIP_BARREL_ROLL_DURATION;
 
+            // Drive sprite frame from progress, played in REVERSE so the ship recovers
+            // from upside-down (end of yaw) back to right-side-up.
+            // 11 unique frames: 6 from sheet 1 (top-view → side-on) + 5 from sheet 2 (side-on → upside-down).
+            const idx    = Phaser.Math.Clamp(Math.floor(this.shipFlipProgress * 11), 0, 10);
+            const revIdx = 10 - idx;
+            if (revIdx < 6) {
+                this.ship.setTexture('manta_roll_start', revIdx);
+            } else {
+                this.ship.setTexture('manta_roll_end', revIdx - 6);
+            }
+
             if (this.shipFlipProgress >= 1) {
                 this.shipFlipPhase    = 'idle';
                 this.shipFlipping     = false;
                 this.shipFlipProgress = 0;
+                this.ship.setTexture('manta_flip_start', 0);   // settle on canonical idle pose
             }
 
             worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing;
@@ -406,22 +426,8 @@ export class Level1Scene extends Phaser.Scene {
     }
 
     startBarrelRoll() {
-        // Phase 2 visual: squish to 0 on Y, toggle flipY, squish back to 1.
-        this.tweens.add({
-            targets:  this.ship,
-            scaleY:   0,
-            duration: SHIP_BARREL_ROLL_DURATION / 2,
-            ease:     'Sine.easeIn',
-            onComplete: () => {
-                this.ship.flipY = !this.ship.flipY;
-                this.tweens.add({
-                    targets:  this.ship,
-                    scaleY:   1,
-                    duration: SHIP_BARREL_ROLL_DURATION / 2,
-                    ease:     'Sine.easeOut',
-                });
-            }
-        });
+        // Frame-driven from update() now; no setup needed.
+
     }
 
 

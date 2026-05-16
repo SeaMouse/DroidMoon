@@ -157,7 +157,7 @@ export const CONE_RAY_COUNT            = 24;   // resolution of the visibility c
 //  LEVEL 1 — MANTA
 // ─────────────────────────────────────────────
 export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
-export const SHIP_FLIP_DURATION  = 450;  // ms — visual flip tween length
+export const SHIP_FLIP_DURATION  = 650;  // ms — visual flip tween length
 export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only
 export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
 export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
