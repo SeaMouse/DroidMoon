@@ -356,9 +356,17 @@ export class Level1Scene extends Phaser.Scene {
         if (firing && time - this.lastShotTime >= SHIP_BULLET_COOLDOWN_MS) {
             this.lastShotTime = time;
             const sx = this.ship.x + LASER_EMITTER_X_OFFSET * this.shipFacing;
-            // Twin guns: one above, one below.
-            this.playerBullets.fire(sx, this.ship.y - LASER_EMITTER_Y_OFFSET, this.shipFacing, 0);
-            this.playerBullets.fire(sx, this.ship.y + LASER_EMITTER_Y_OFFSET, this.shipFacing, 0);
+
+            // Gun separation shrinks with the cosine of the roll angle.
+            // During roll, angle goes from π (upside-down) at progress 0 to 0 (upright) at progress 1.
+            // Outside roll, ship is upright so multiplier is just 1.
+            const rollAngle = (this.shipFlipPhase === 'roll')
+            ? (1 - this.shipFlipProgress) * Math.PI
+            : 0;
+            const dy = LASER_EMITTER_Y_OFFSET * Math.cos(rollAngle);
+
+            this.playerBullets.fire(sx, this.ship.y - dy, this.shipFacing, 0);
+            this.playerBullets.fire(sx, this.ship.y + dy, this.shipFacing, 0);
         }
 
         // --- Bullet bookkeeping: turret hits + offscreen cleanup ---
