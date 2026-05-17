@@ -159,6 +159,7 @@ export const CONE_RAY_COUNT            = 24;   // resolution of the visibility c
 export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
 export const SHIP_FLIP_DURATION  = 650;  // ms — visual flip tween length
 export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only
+export const SHIP_ROLL_DURATION = 200;  // ms to roll onto side (and back off again)
 export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
 export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
 export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip
@@ -167,6 +168,7 @@ export const SHIP_GEAR_UP_MS   = 60;   // ms between gear-up ticks (acceleration
 export const SHIP_GEAR_DOWN_MS = 30;   // ms between gear-down ticks (braking)
 export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
 export const SHIP_EDGE_ZONE       = 250;  // px — auto-flip distance from map edge
+
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA BULLETS
 // ─────────────────────────────────────────────

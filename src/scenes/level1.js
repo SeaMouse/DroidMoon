@@ -5,7 +5,7 @@ import { Turret } from '../turret.js';
 import { BulletPool } from '../systems.js';
 import {
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
-    SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,
+    SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,SHIP_ROLL_DURATION,
     SHIP_INITIAL_FACING,
     SHIP_SHADOW_OFFSET_X, SHIP_SHADOW_OFFSET_Y,SHIP_SHADOW_ALPHA,
     SHIP_SKY_MARGIN_TOP, SHIP_SKY_MARGIN_BOTTOM,
@@ -64,6 +64,7 @@ export class Level1Scene extends Phaser.Scene {
         // Obstacles (collidable).
         this.obstacleLayer = map.createLayer('Obstacles', tileset, 0, 0);
         this.obstacleLayer.setCollisionByProperty({ obstacle: true });
+        this.obstacleLayer.setDepth(11);  // ← above shadow (10), below ship
 
         // World dimensions come from the map.
         this.worldW = map.widthInPixels;
@@ -87,7 +88,7 @@ export class Level1Scene extends Phaser.Scene {
 
         // Render above the tile layers (default depth 0) but below the ship.
         this.shipShadow.setDepth(10);
-        this.ship.setDepth(11);
+        this.ship.setDepth(12);
 
         // Mask the shadow to the hull's footprint so it never spills onto the starfield.
         this.shipShadow.enableFilters();
@@ -205,8 +206,13 @@ export class Level1Scene extends Phaser.Scene {
         this.shipFlipProgress   = 0;
         this.shipFlipPhase      = 'idle';
         this.shipPrevHorizInput = 0;
+        // Side-roll state (independent of flip)
+        this.shipRollPhase      = 'idle';   // 'idle' | 'rolling-in' | 'side' | 'rolling-out'
+        this.shipRollDir        = 0;        // -1 = rolled via UP, +1 = rolled via DOWN
+        this.shipRollProgress   = 0;        // 0 = upright, 1 = fully on side
+        this.shipPrevVertInputR = 0;        // for right-stick edge detection
+        this.shipFlipPending = false;   // brake-while-sideways waits for rollback to finish
 
-        // ─── CHANGED ───
         this.cameras.main.startFollow(this.ship, true, 1, 1);
 
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -248,6 +254,60 @@ export class Level1Scene extends Phaser.Scene {
             vertInput = pad.leftStick.y > 0 ? 1 : -1;
         }
 
+        // --- Read right stick Y (for side-roll) ---
+        let vertInputR = 0;
+        if (pad && Math.abs(pad.rightStick.y) > INPUT_DEAD_ZONE) {
+            vertInputR = pad.rightStick.y > 0 ? 1 : -1;
+        }
+
+        // --- Side-roll state machine ---
+        if (!this.shipFlipping) {
+            const rstickEdge = vertInputR !== 0 && vertInputR !== this.shipPrevVertInputR;
+
+            if (this.shipRollPhase === 'idle' && rstickEdge) {
+                // Start rolling onto our side
+                this.shipRollPhase    = 'rolling-in';
+                this.shipRollDir      = vertInputR;
+                this.shipRollProgress = 0;
+            } else if (this.shipRollPhase === 'side') {
+                // Only way back upright manually: opposite stick push.
+                if (rstickEdge && vertInputR === -this.shipRollDir) {
+                    this.shipRollPhase    = 'rolling-out';
+                    this.shipRollProgress = 0;
+                }
+            }
+        }
+        this.shipPrevVertInputR = vertInputR;
+
+        // --- Advance the roll animation if one's running ---
+        if (this.shipRollPhase === 'rolling-in' || this.shipRollPhase === 'rolling-out') {
+            this.shipRollProgress += delta / SHIP_ROLL_DURATION;
+
+            // Frames 0..5 of manta_roll_start: 0 = top-view, 5 = fully on side.
+            const t = this.shipRollPhase === 'rolling-in'
+            ? this.shipRollProgress
+            : 1 - this.shipRollProgress;
+            const frame = Phaser.Math.Clamp(Math.floor(t * 6), 0, 5);
+            this.ship.setTexture('manta_roll_start', frame);
+            this.ship.setFlipY(this.shipRollDir > 0);  // mirror for the opposite direction
+
+            if (this.shipRollProgress >= 1) {
+                this.shipRollProgress = 0;
+                if (this.shipRollPhase === 'rolling-in') {
+                    this.shipRollPhase = 'side';
+                } else {
+                    this.shipRollPhase = 'idle';
+                    this.shipRollDir   = 0;
+                    this.ship.setFlipY(false);
+                    this.ship.setTexture('manta_flip_start', 0);
+                    if (this.shipFlipPending) {           // ← new
+                        this.shipFlipPending = false;     // ← new
+                        this.startFlip();                 // ← new
+                    }
+                }
+            }
+        }
+
         // --- Auto-flip near map edges ---
         const inLeftEdge  = this.ship.x < SHIP_EDGE_ZONE;
         const inRightEdge = this.ship.x > this.worldW - SHIP_EDGE_ZONE;
@@ -276,13 +336,18 @@ export class Level1Scene extends Phaser.Scene {
             } else if (horizInput === -this.shipFacing) {
                 this.shipGearShiftTimer += delta;
                 if (this.shipGearShiftTimer >= SHIP_GEAR_DOWN_MS) {
+                    this.shipGearShiftTimer = 0;
                     if (this.shipGear > 0) {
                         this.shipGear--;
-                        this.shipGearShiftTimer = 0;
-                    } else {
-                        this.shipGearShiftTimer = 0;
+                    } else if (this.shipRollPhase === 'side') {
+                        // Roll back upright first; flip kicks in once rolling-out completes.
+                        this.shipRollPhase    = 'rolling-out';
+                        this.shipRollProgress = 0;
+                        this.shipFlipPending  = true;
+                    } else if (this.shipRollPhase === 'idle') {
                         this.startFlip();
                     }
+                    // If we're mid-roll, do nothing this tick — wait for it to settle.
                 }
             }
 
@@ -365,6 +430,7 @@ export class Level1Scene extends Phaser.Scene {
         // Keep the shadow in lockstep with the ship.
         this.shipShadow.setTexture(this.ship.texture.key, this.ship.frame.name);
         this.shipShadow.setFlipX(this.ship.flipX);
+        this.shipShadow.setFlipY(this.ship.flipY);
         this.shipShadow.setRotation(this.ship.rotation);
         this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X;
         this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y;
@@ -379,11 +445,19 @@ export class Level1Scene extends Phaser.Scene {
             const sx = this.ship.x + LASER_EMITTER_X_OFFSET * this.shipFacing;
 
             // Gun separation shrinks with the cosine of the roll angle.
-            // During roll, angle goes from π (upside-down) at progress 0 to 0 (upright) at progress 1.
-            // Outside roll, ship is upright so multiplier is just 1.
-            const rollAngle = (this.shipFlipPhase === 'roll')
-            ? (1 - this.shipFlipProgress) * Math.PI
-            : 0;
+            // Two systems can roll the ship — only one is active at a time:
+            //   • flip's barrel-roll phase: goes from π (upside-down) back to 0
+            //   • side-roll: goes 0 → π/2, holds at π/2, then π/2 → 0
+            let rollAngle = 0;
+            if (this.shipFlipPhase === 'roll') {
+                rollAngle = (1 - this.shipFlipProgress) * Math.PI;
+            } else if (this.shipRollPhase === 'rolling-in') {
+                rollAngle = this.shipRollProgress * (Math.PI / 2);
+            } else if (this.shipRollPhase === 'side') {
+                rollAngle = Math.PI / 2;
+            } else if (this.shipRollPhase === 'rolling-out') {
+                rollAngle = (1 - this.shipRollProgress) * (Math.PI / 2);
+            }
             const dy = LASER_EMITTER_Y_OFFSET * Math.cos(rollAngle);
 
             this.playerBullets.fire(sx, this.ship.y - dy, this.shipFacing, 0);
