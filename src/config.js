@@ -156,6 +156,7 @@ export const CONE_RAY_COUNT            = 24;   // resolution of the visibility c
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA
 // ─────────────────────────────────────────────
+export const SHIP_SCALE          = 0.25; // sprite scale (1 = native 64px, 0.25 = 16px)
 export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
 export const SHIP_FLIP_DURATION  = 650;  // ms — visual flip tween length
 export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only

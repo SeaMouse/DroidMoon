@@ -4,6 +4,7 @@ import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
 import { BulletPool } from '../systems.js';
 import {
+    SHIP_SCALE,
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,SHIP_ROLL_DURATION,
     SHIP_INITIAL_FACING,
@@ -80,9 +81,11 @@ export class Level1Scene extends Phaser.Scene {
 
         // --- Ship texture  ---
         this.ship = this.physics.add.sprite(spawnX, spawnY, 'manta_flip_start', 0);
+        this.ship.setScale(SHIP_SCALE);
 
         // Cast shadow: a duplicate of the ship, tinted black and offset, masked to the hull.
         this.shipShadow = this.add.sprite(this.ship.x, this.ship.y, this.ship.texture.key, this.ship.frame.name);
+        this.shipShadow.setScale(SHIP_SCALE);
         this.shipShadow.setTint(0x000000);
         this.shipShadow.setAlpha(SHIP_SHADOW_ALPHA);
 
@@ -432,8 +435,8 @@ export class Level1Scene extends Phaser.Scene {
         this.shipShadow.setFlipX(this.ship.flipX);
         this.shipShadow.setFlipY(this.ship.flipY);
         this.shipShadow.setRotation(this.ship.rotation);
-        this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X;
-        this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y;
+        this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X * SHIP_SCALE;
+        this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y * SHIP_SCALE;
 
         // --- Twin laser fire ---
         const firing = this.shipFlipPhase !== 'yaw' && (
@@ -442,7 +445,7 @@ export class Level1Scene extends Phaser.Scene {
         );
         if (firing && time - this.lastShotTime >= SHIP_BULLET_COOLDOWN_MS) {
             this.lastShotTime = time;
-            const sx = this.ship.x + LASER_EMITTER_X_OFFSET * this.shipFacing;
+            const sx = this.ship.x + LASER_EMITTER_X_OFFSET * SHIP_SCALE * this.shipFacing;
 
             // Gun separation shrinks with the cosine of the roll angle.
             // Two systems can roll the ship — only one is active at a time:
@@ -458,7 +461,7 @@ export class Level1Scene extends Phaser.Scene {
             } else if (this.shipRollPhase === 'rolling-out') {
                 rollAngle = (1 - this.shipRollProgress) * (Math.PI / 2);
             }
-            const dy = LASER_EMITTER_Y_OFFSET * Math.cos(rollAngle);
+            const dy = LASER_EMITTER_Y_OFFSET * SHIP_SCALE * Math.cos(rollAngle);
 
             this.playerBullets.fire(sx, this.ship.y - dy, this.shipFacing, 0);
             this.playerBullets.fire(sx, this.ship.y + dy, this.shipFacing, 0);
