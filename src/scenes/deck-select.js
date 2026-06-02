@@ -19,36 +19,38 @@ export class DeckSelectScene extends Phaser.Scene {
     }
 
     create() {
+        const cx = this.scale.width / 2;
+
         this.add.graphics()
         .fillStyle(0x000000, 0.75)
-        .fillRect(0, 0, 800, 600)
+        .fillRect(0, 0, this.scale.width, this.scale.height)
         .setScrollFactor(0);
 
-        this.add.text(400, 140, 'SELECT DECK', {
-            fontFamily: 'monospace', fontSize: '32px',
-            fill: '#44aaff', stroke: '#000000', strokeThickness: 3
+        this.add.text(cx, 56, 'SELECT DECK', {
+            fontFamily: 'monospace', fontSize: '13px',
+            fill: '#44aaff', stroke: '#000000', strokeThickness: 1
         }).setOrigin(0.5).setScrollFactor(0);
 
-        this.add.text(400, 480,
-                      'Arrow keys / D-pad to choose — Enter / A to confirm — Esc / B to cancel', {
-                          fontFamily: 'monospace', fontSize: '11px', fill: '#666688'
+        this.add.text(cx, 195,
+                      'Arrow / D-pad: choose — Enter / A: confirm — Esc / B: cancel', {
+                          fontFamily: 'monospace', fontSize: '5px', fill: '#666688'
                       }).setOrigin(0.5).setScrollFactor(0);
 
                       const connectedDecks = this.lift.decks;
                       const allOptions     = [state.currentDeck, ...connectedDecks.filter(d => d !== state.currentDeck)];
 
-                      let yPos = 220;
+                      let yPos = 95;
                       for (const deckName of allOptions) {
                           const def    = deckDefinitions[deckName];
                           const label  = def ? def.label : deckName;
-                          const suffix = (deckName === state.currentDeck) ? '  (current deck)' : '';
+                          const suffix = (deckName === state.currentDeck) ? '  (current)' : '';
 
-                          const txt = this.add.text(400, yPos, label + suffix, {
-                              fontFamily: 'monospace', fontSize: '20px', fill: '#aaaacc'
+                          const txt = this.add.text(cx, yPos, label + suffix, {
+                              fontFamily: 'monospace', fontSize: '8px', fill: '#aaaacc'
                           }).setOrigin(0.5).setScrollFactor(0);
 
                           this.items.push({ text: txt, deckName: deckName });
-                          yPos += 44;
+                          yPos += 18;
                       }
 
                       this.menuKeys = this.input.keyboard.addKeys({
@@ -66,10 +68,10 @@ export class DeckSelectScene extends Phaser.Scene {
             const label = deckDefinitions[item.deckName]?.label || item.deckName;
             const suffix = (item.deckName === state.currentDeck) ? '  (current deck)' : '';
             if (i === index) {
-                item.text.setStyle({ fill: '#ffffff', fontSize: '22px' });
+                item.text.setStyle({ fill: '#ffffff', fontSize: '9px' });
                 item.text.setText('▸ ' + label + suffix);
             } else {
-                item.text.setStyle({ fill: '#aaaacc', fontSize: '20px' });
+                item.text.setStyle({ fill: '#aaaacc', fontSize: '8px' });
                 item.text.setText('  ' + label + suffix);
             }
         }

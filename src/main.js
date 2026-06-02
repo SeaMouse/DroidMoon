@@ -1,27 +1,28 @@
 import Phaser from 'phaser';
+import { GAME_WIDTH, GAME_HEIGHT, DISPLAY_ZOOM } from './config.js';
 import { TitleScene } from './scenes/title.js';
 import { GameScene } from './game-scene.js';
 import { EndScene } from './scenes/end.js';
 import { DeckSelectScene } from './scenes/deck-select.js';
 import { Level1Scene } from './scenes/level1.js';
 
+
 const config = {
     type: Phaser.AUTO,
-    width: 800,
-    height: 600,
     backgroundColor: '#1a1a2e',
     pixelArt: true,
+    scale: {
+        mode: Phaser.Scale.NONE,            // fixed size — don't stretch to fill the window
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: GAME_WIDTH,                  // 320 internal
+        height: GAME_HEIGHT,               // 256 internal
+        zoom: DISPLAY_ZOOM,                // displayed at 640×512
+    },
     physics: {
         default: 'arcade',
-            arcade: {
-                debug: false,
-                fps: 60,
-                fixedStep: true,
-            }
+            arcade: { debug: false, fps: 60, fixedStep: true }
     },
-    input: {
-        gamepad: true
-    },
+    input: { gamepad: true },
     scene: [TitleScene, Level1Scene, GameScene, EndScene, DeckSelectScene]
 };
 

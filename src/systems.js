@@ -741,10 +741,10 @@ export function updateLiftHold(time, pad) {
         const elapsed  = time - Lifts.holdStart;
         const progress = Math.min(elapsed / LIFT_HOLD_MS, 1);
 
-        const barW = 120;
-        const barH = 10;
-        const barX = (800 - barW) / 2;
-        const barY = 560;
+        const barW = 80;
+        const barH = 7;
+        const barX = (state.scene.scale.width - barW) / 2;
+        const barY = state.scene.scale.height - 28;
 
         Lifts.progressBg.setVisible(true);
         Lifts.progressBg.clear();
@@ -890,10 +890,13 @@ function triggerDeckShutdown() {
 }
 
 function showDeckClearedMessage() {
-    const msg = state.scene.add.text(400, 260, 'DECK POWER DOWN', {
-        fontFamily: 'monospace', fontSize: '32px',
-        fill: '#44aaff', stroke: '#000000', strokeThickness: 3
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
+    const msg = state.scene.add.text(
+        state.scene.scale.width / 2,
+        state.scene.scale.height / 2,
+        'DECK POWER DOWN', {
+            fontFamily: 'monospace', fontSize: '14px',
+            fill: '#44aaff', stroke: '#000000', strokeThickness: 2
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
 
     state.scene.tweens.add({
         targets:    msg,
@@ -913,7 +916,7 @@ export function createHUD(scene) {
     const BAR_Y = 12;
 
     scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
-        fontFamily: 'monospace', fontSize: '10px', fill: '#aaffcc'
+        fontFamily: 'monospace', fontSize: '6px', fill: '#aaffcc'
     }).setScrollFactor(0).setDepth(50);
 
     const barBg = scene.add.graphics();
@@ -924,14 +927,14 @@ export function createHUD(scene) {
     state.energyBarFill = scene.add.graphics();
     state.energyBarFill.setScrollFactor(0).setDepth(51);
 
-    state.killText = scene.add.text(BAR_X, BAR_Y + 32, 'Destroyed: 0', {
-        fontFamily: 'monospace', fontSize: '12px', fill: '#aaffcc'
+    state.killText = scene.add.text(BAR_X, BAR_Y + 24, 'Destroyed: 0', {
+        fontFamily: 'monospace', fontSize: '6px', fill: '#aaffcc'
     });
     state.killText.setScrollFactor(0).setDepth(50);
 
     const deckDef = deckDefinitions[state.currentDeck];
-    state.deckLabel = scene.add.text(800 - 12, 12, deckDef ? deckDef.label : state.currentDeck, {
-        fontFamily: 'monospace', fontSize: '11px', fill: '#44aaff', align: 'right'
+    state.deckLabel = scene.add.text(scene.scale.width - 12, 12, deckDef ? deckDef.label : state.currentDeck, {
+        fontFamily: 'monospace', fontSize: '6px', fill: '#44aaff', align: 'right'
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(50);
 
     updateHUD();

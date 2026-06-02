@@ -12,30 +12,31 @@ export class EndScene extends Phaser.Scene {
 
     create() {
         const won = (this.result === 'won');
+        const cx = this.scale.width / 2;
 
-        this.add.rectangle(0, 0, 800, 600,
+        this.add.rectangle(0, 0, this.scale.width, this.scale.height,
                            won ? 0x0a1a10 : 0x1a0a0a).setOrigin(0);
 
-                           this.add.text(400, 200, won ? 'SHIP CLEARED' : 'GAME OVER', {
-                               fontFamily: 'monospace', fontSize: '64px',
-                               fill: won ? '#44ff88' : '#ff3344',
-                               stroke: '#000000', strokeThickness: 4
-                           }).setOrigin(0.5);
+        this.add.text(cx, 80, won ? 'SHIP CLEARED' : 'GAME OVER', {
+            fontFamily: 'monospace', fontSize: '24px',
+            fill: won ? '#44ff88' : '#ff3344',
+            stroke: '#000000', strokeThickness: 2
+        }).setOrigin(0.5);
 
-                           const msg = won
-                           ? 'Every deck is quiet. Every droid is scrap.'
-                           : 'The droids won this round.';
-                           this.add.text(400, 290, msg, {
-                               fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
-                           }).setOrigin(0.5);
+        const msg = won
+            ? 'Every deck is quiet. Every droid is scrap.'
+            : 'The droids won this round.';
+        this.add.text(cx, 124, msg, {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#ffffff'
+        }).setOrigin(0.5);
 
-                           this.add.text(400, 340, 'Droids destroyed: ' + state.killCount, {
-                               fontFamily: 'monospace', fontSize: '14px', fill: '#aaaacc'
-                           }).setOrigin(0.5);
+        this.add.text(cx, 140, 'Droids destroyed: ' + state.killCount, {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#aaaacc'
+        }).setOrigin(0.5);
 
-                           const prompt = this.add.text(400, 460, 'Press any key or button to return to title', {
-                               fontFamily: 'monospace', fontSize: '16px', fill: '#ffee00'
-                           }).setOrigin(0.5);
+        const prompt = this.add.text(cx, 192, 'Press any key or button to return to title', {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#ffee00'
+        }).setOrigin(0.5);
 
                            this.tweens.add({
                                targets: prompt, alpha: 0.35,

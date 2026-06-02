@@ -9,39 +9,41 @@ export class TitleScene extends Phaser.Scene {
     create() {
         resetGameState();
 
-        this.add.rectangle(0, 0, 800, 600, 0x0a0a18).setOrigin(0);
+        const cx = this.scale.width / 2;
 
-        this.add.text(400, 150, 'DECK RUNNER', {
-            fontFamily: 'monospace', fontSize: '56px',
-            fill: '#44ffaa', stroke: '#000000', strokeThickness: 4
-        }).setOrigin(0.5);
+        this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0a0a18).setOrigin(0);
 
-        this.add.text(400, 210, '— a Paradroid-style POC —', {
-            fontFamily: 'monospace', fontSize: '14px', fill: '#88bbdd'
+        this.add.text(cx, 45, 'DROID MOON', {
+            fontFamily: 'monospace', fontSize: '22px',
+            fill: '#44ffaa', stroke: '#000000', strokeThickness: 2
         }).setOrigin(0.5);
 
-        this.add.text(400, 300, 'Clear every deck of hostile droids.', {
-            fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
-        }).setOrigin(0.5);
-        this.add.text(400, 330, 'Use lifts to move between decks.', {
-            fontFamily: 'monospace', fontSize: '16px', fill: '#ffffff'
+        this.add.text(cx, 74, '— a Paradroid-style POC —', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#88bbdd'
         }).setOrigin(0.5);
 
-        this.add.text(400, 410, 'Move:          Left stick', {
-            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        this.add.text(cx, 96, 'Clear every deck of hostile droids.', {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#ffffff'
         }).setOrigin(0.5);
-        this.add.text(400, 430, 'Aim:           Right stick', {
-            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
-        }).setOrigin(0.5);
-        this.add.text(400, 450, 'Fire:          Right trigger / Space', {
-            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
-        }).setOrigin(0.5);
-        this.add.text(400, 470, 'Lift activate: Hold F or right stick while on a lift', {
-            fontFamily: 'monospace', fontSize: '12px', fill: '#aaaacc'
+        this.add.text(cx, 107, 'Use lifts to move between decks.', {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#ffffff'
         }).setOrigin(0.5);
 
-        const prompt = this.add.text(400, 530, 'Press any key or button to begin', {
-            fontFamily: 'monospace', fontSize: '20px', fill: '#ffee00'
+        this.add.text(cx, 130, 'Move:          Left stick', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(cx, 142, 'Aim:           Right stick', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(cx, 154, 'Fire:          Right trigger / Space', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+        this.add.text(cx, 166, 'Lift:          Hold F or right stick on a lift', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
+        }).setOrigin(0.5);
+
+        const prompt = this.add.text(cx, 210, 'Press any key or button to begin', {
+            fontFamily: 'monospace', fontSize: '8px', fill: '#ffee00'
         }).setOrigin(0.5);
 
         this.tweens.add({

@@ -4,7 +4,7 @@ import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
 import { BulletPool } from '../systems.js';
 import {
-    SHIP_SCALE,
+    CAMERA_ZOOM,SHIP_SCALE,
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,SHIP_ROLL_DURATION,
     SHIP_INITIAL_FACING,
@@ -217,6 +217,7 @@ export class Level1Scene extends Phaser.Scene {
         this.shipFlipPending = false;   // brake-while-sideways waits for rollback to finish
 
         this.cameras.main.startFollow(this.ship, true, 1, 1);
+        this.cameras.main.setZoom(CAMERA_ZOOM);
 
         this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -584,11 +585,13 @@ triggerLanding(zone) {
 
     const def      = zone.targetDeck;
     const labelTxt = 'LANDING — ' + def.toUpperCase();
-    this.add.rectangle(400, 300, 420, 80, 0x000000, 0.75)
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    this.add.rectangle(cx, cy, 210, 40, 0x000000, 0.75)
     .setScrollFactor(0).setDepth(200);
-    this.add.text(400, 300, labelTxt, {
-        fontFamily: 'monospace', fontSize: '24px',
-        fill: '#44aaff', stroke: '#000000', strokeThickness: 3,
+    this.add.text(cx, cy, labelTxt, {
+        fontFamily: 'monospace', fontSize: '11px',
+        fill: '#44aaff', stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
 
     this.cameras.main.fadeOut(800, 0, 0, 0);
@@ -600,13 +603,13 @@ triggerLanding(zone) {
 }
 
 createShipHUD() {
-    const BAR_W = 120;
-    const BAR_H = 8;
-    const BAR_X = 800 - 12 - BAR_W;   // 12px in from the right edge
-    const BAR_Y = 24;
+    const BAR_W = 80;
+    const BAR_H = 6;
+    const BAR_X = this.scale.width - 12 - BAR_W;
+    const BAR_Y = 16;
 
-    this.add.text(BAR_X, BAR_Y - 12, 'ENERGY', {
-        fontFamily: 'monospace', fontSize: '10px', fill: '#aaffcc'
+    this.add.text(BAR_X, BAR_Y - 8, 'ENERGY', {
+        fontFamily: 'monospace', fontSize: '6px', fill: '#aaffcc'
     }).setScrollFactor(0).setDepth(100);
 
     const bg = this.add.graphics();
@@ -670,11 +673,13 @@ triggerShipGameOver() {
     this.ship.body.setVelocity(0, 0);
     this.ship.setAlpha(0.3);
 
-    this.add.rectangle(400, 300, 460, 90, 0x000000, 0.75)
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    this.add.rectangle(cx, cy, 220, 44, 0x000000, 0.75)
     .setScrollFactor(0).setDepth(200);
-    this.add.text(400, 300, 'SHIP DESTROYED', {
-        fontFamily: 'monospace', fontSize: '28px',
-        fill: '#ff3344', stroke: '#000000', strokeThickness: 3,
+    this.add.text(cx, cy, 'SHIP DESTROYED', {
+        fontFamily: 'monospace', fontSize: '13px',
+        fill: '#ff3344', stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
 
     this.cameras.main.fadeOut(1500, 0, 0, 0);

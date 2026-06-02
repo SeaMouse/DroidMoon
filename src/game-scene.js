@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { state } from './state.js';
 import {
-    PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
+    CAMERA_ZOOM,PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
     PLAYER_MAX_ENERGY, INPUT_DEAD_ZONE,
     deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
@@ -161,6 +161,7 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
         this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
         this.cameras.main.startFollow(state.player, true, 0.08, 0.08);
+        this.cameras.main.setZoom(CAMERA_ZOOM);
 
         // --- Aim laser ---
         state.aimLaser = this.add.graphics();

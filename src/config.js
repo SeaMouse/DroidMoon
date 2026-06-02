@@ -15,8 +15,8 @@ export const WANDER_BACKTRACK_CHANCE = 0.05;
 export const PLAYER_MAX_ENERGY = 100;
 export const INVINCIBILITY_MS  = 1200;
 
-export const ENERGY_BAR_WIDTH  = 150;
-export const ENERGY_BAR_HEIGHT = 14;
+export const ENERGY_BAR_WIDTH  = 100;
+export const ENERGY_BAR_HEIGHT = 8;
 
 export const LIFT_HOLD_MS = 2000;
 
@@ -29,6 +29,14 @@ export const LIGHT_BAND_ERASE_ALPHA = 0.35;
 export const DIM_COLOUR = 0x444466;
 
 export const DEBUG_LOGS = false;
+
+// ─────────────────────────────────────────────
+//  DISPLAY / CANVAS
+// ─────────────────────────────────────────────
+export const GAME_WIDTH   = 640;   // internal render width  (classic Amiga res)
+export const GAME_HEIGHT  = 512;   // internal render height
+export const DISPLAY_ZOOM = 2;     // on-screen scale-up: 320×256 → 640×512 px
+export const CAMERA_ZOOM  = 1;     // in-world magnification — leave at 1 for now
 
 // ─────────────────────────────────────────────
 //  DECK DEFINITIONS
@@ -156,7 +164,7 @@ export const CONE_RAY_COUNT            = 24;   // resolution of the visibility c
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA
 // ─────────────────────────────────────────────
-export const SHIP_SCALE          = 0.25; // sprite scale (1 = native 64px, 0.25 = 16px)
+export const SHIP_SCALE          = 1.0; // sprite scale (1 = native 64px, 0.25 = 16px)
 export const SHIP_VERTICAL_SPEED = 250;  // px/sec — vertical movement (no momentum)
 export const SHIP_FLIP_DURATION  = 650;  // ms — visual flip tween length
 export const SHIP_BARREL_ROLL_DURATION = 450;  // ms — phase 2 of the flip, visual only
@@ -164,7 +172,7 @@ export const SHIP_ROLL_DURATION = 200;  // ms to roll onto side (and back off ag
 export const SHIP_INITIAL_FACING = 1;    // 1 = right, -1 = left
 export const SHIP_SKY_MARGIN_TOP    = 60;   // px — ship can't fly into top sky strip
 export const SHIP_SKY_MARGIN_BOTTOM = 60;   // px — or bottom sky strip
-export const SHIP_SPEED_LEVELS  = [120, 180, 240, 360, 600, 720]; // px/sec, 6 gears
+export const SHIP_SPEED_LEVELS  = [120, 180, 240, 300, 360, 420]; // px/sec, 6 gears
 export const SHIP_GEAR_UP_MS   = 60;   // ms between gear-up ticks (acceleration)
 export const SHIP_GEAR_DOWN_MS = 30;   // ms between gear-down ticks (braking)
 export const SHIP_CAMERA_LEAD_MAX = 75;  // px — max camera offset at top speed
@@ -182,8 +190,8 @@ export const SHIP_BULLET_MAX_POOL    = 80;
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA SHADOW
 // ─────────────────────────────────────────────
-export const SHIP_SHADOW_OFFSET_X = 8;     // px right of ship
-export const SHIP_SHADOW_OFFSET_Y = 14;    // px below ship
+export const SHIP_SHADOW_OFFSET_X = 28;     // px right of ship
+export const SHIP_SHADOW_OFFSET_Y = 28;    // px below ship
 export const SHIP_SHADOW_ALPHA    = 0.45;  // 0 = invisible, 1 = solid black
 // ─────────────────────────────────────────────
 //  LEVEL 1 — TURRET BULLETS
