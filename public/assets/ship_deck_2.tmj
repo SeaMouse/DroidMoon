@@ -2776,6 +2776,526 @@
               "value": true
             }
           ]
+        },
+        {
+          "id": 272,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 273,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 274,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 275,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 276,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 277,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 280,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 281,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 282,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 283,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 284,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 285,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 288,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 289,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 290,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 291,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 292,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 293,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 296,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 297,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 298,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 299,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 300,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 301,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 304,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 305,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 306,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 307,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 308,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 309,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 312,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 313,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 314,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 315,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 316,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 317,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 320,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 321,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 328,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 329,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 336,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 337,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 344,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 345,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 352,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 353,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 354,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 355,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 360,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 361,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 362,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": 363,
+          "properties": [
+            {
+              "name": "obstacle",
+              "type": "bool",
+              "value": true
+            }
+          ]
         }
       ]
     }
