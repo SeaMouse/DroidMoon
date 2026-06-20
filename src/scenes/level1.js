@@ -56,15 +56,21 @@ export class Level1Scene extends Phaser.Scene {
         const map     = this.make.tilemap({ key: 'ship_exterior' });
         const tileset = map.addTilesetImage('tiles', 'tiles');
 
-        // Image layer (Starfield) — Phaser reads parallaxx/parallaxy from Tiled.
+        // Image layer — Phaser handles this separately from tile layers.
         map.createLayer('Starfield', tileset, 0, 0);
 
-        // Hull (decorative, no collision).
-        this.hullLayer = map.createLayer('Hull', tileset, 0, 0);
+        // Tile layers — iterate every one in the map, in Tiled's order.
+        let depth = 0;
+        for (const layerData of map.layers) {
+            const layer = map.createLayer(layerData.name, tileset, 0, 0);
+            if (!layer) { continue; }
+            layer.setDepth(depth++);
+            if (layerData.name === 'Obstacles') {
+                this.obstacleLayer = layer;
+                layer.setCollisionByProperty({ obstacle: true });
+            }
+        }
 
-        // Obstacles (collidable).
-        this.obstacleLayer = map.createLayer('Obstacles', tileset, 0, 0);
-        this.obstacleLayer.setCollisionByProperty({ obstacle: true });
         this.obstacleLayer.setDepth(11);  // ← above shadow (10), below ship
 
         // World dimensions come from the map.
@@ -91,7 +97,7 @@ export class Level1Scene extends Phaser.Scene {
 
         // Render above the tile layers (default depth 0) but below the ship.
         this.shipShadow.setDepth(10);
-        this.ship.setDepth(12);
+        this.ship.setDepth(100);
 
         // Mask the shadow to the hull's footprint so it never spills onto the starfield.
         this.shipShadow.enableFilters();
