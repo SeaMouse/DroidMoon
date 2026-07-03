@@ -161,6 +161,12 @@ export const ENEMY_BOUNCE_COOLDOWN_MS  = 220;  // ms before two enemies can boun
 
 export const CONE_RAY_COUNT            = 24;   // resolution of the visibility cone
 
+// Adaptive bisection — extra rays inserted between adjacent cone rays where
+// they disagree about what they hit (fixes dark wedges along grazing walls).
+export const CONE_BISECT_MAX_DEPTH     = 6;     // recursion limit per ray pair
+export const CONE_BISECT_MIN_ANGLE     = 0.002; // rad — stop splitting below this gap
+export const CONE_BISECT_TOLERANCE_PX  = 2;     // deviation below this = chord matches the wall
+
 export const LOS_CHECK_INTERVAL_MS     = 120;  // ms between per-enemy line-of-sight checks
 
 // ─────────────────────────────────────────────

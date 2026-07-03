@@ -16,6 +16,7 @@ import {
     deckDefinitions, weaponTypes, enemyTypes,
     AIM_LASER_MAX_RANGE, PLAYER_SPRITE_RADIUS, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
     PLAYER_KNOCKBACK_MS, ENEMY_BOUNCE_SPEED, ENEMY_BOUNCE_COOLDOWN_MS, CONE_RAY_COUNT,
+    CONE_BISECT_MAX_DEPTH, CONE_BISECT_MIN_ANGLE, CONE_BISECT_TOLERANCE_PX,
     LOS_CHECK_INTERVAL_MS,
     INPUT_DEAD_ZONE,
     DEBUG_LOGS
@@ -430,6 +431,51 @@ export function computeConeHits(originX, originY, facing, halfAngle, range) {
     }
 
     hits.sort((a, b) => a.rel - b.rel);
+
+    // --- Adaptive bisection ---
+    // Uniform rays are a few degrees apart, which is far too coarse for walls
+    // seen at grazing angles: hit spacing along the wall goes as 1/tan(gap),
+    // so looking down a corridor the polygon would cut a straight chord from
+    // the last wall hit to the range arc, leaving a visible dark wedge.
+    // Corner rays can't rescue this case — a corridor face that runs past
+    // `range` has its corners culled above. So wherever two adjacent rays
+    // disagree about what they hit, keep splitting the angle between them
+    // until the chord matches the surface (or we hit the depth/angle floor).
+    const refined = [];
+
+    function bisect(a, distA, b, distB, depth) {
+        if (depth <= 0 || (b.rel - a.rel) < CONE_BISECT_MIN_ANGLE) { return; }
+        // Hits at near-identical distance are the same feature (or both on
+        // the arc) — the chord is already right, skip the midpoint cast.
+        if (Math.abs(distA - distB) < CONE_BISECT_TOLERANCE_PX) { return; }
+
+        const relMid  = (a.rel + b.rel) / 2;
+        const hitMid  = castClamped(facing + relMid);
+        const distMid = Math.hypot(hitMid.x - originX, hitMid.y - originY);
+
+        // Midpoint ray landed on the chord between a and b → the chord
+        // already matches the surface (e.g. one flat wall seen at a slant).
+        const devX = hitMid.x - (a.x + b.x) / 2;
+        const devY = hitMid.y - (a.y + b.y) / 2;
+        if (devX * devX + devY * devY <
+            CONE_BISECT_TOLERANCE_PX * CONE_BISECT_TOLERANCE_PX) { return; }
+
+        const mid = { x: hitMid.x, y: hitMid.y, rel: relMid };
+        refined.push(mid);
+        bisect(a, distA, mid, distMid, depth - 1);
+        bisect(mid, distMid, b, distB, depth - 1);
+    }
+
+    const dists = hits.map(h => Math.hypot(h.x - originX, h.y - originY));
+    for (let i = 0; i < hits.length - 1; i++) {
+        bisect(hits[i], dists[i], hits[i + 1], dists[i + 1], CONE_BISECT_MAX_DEPTH);
+    }
+
+    if (refined.length > 0) {
+        hits.push(...refined);
+        hits.sort((a, b) => a.rel - b.rel);
+    }
+
     return hits;
 }
 
