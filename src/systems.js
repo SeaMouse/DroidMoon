@@ -538,7 +538,8 @@ export function updateFogOfWar() {
 
     // One persistent brush per band (created in GameScene.create), reused every
     // frame instead of allocating/destroying Graphics objects — avoids GC churn.
-    // Kept separate per band because erase ops aren't flushed until render().
+    // Kept separate per band because erase ops are only queued here — they
+    // aren't executed until the RT's render pass flushes the command buffer.
     for (let i = 0; i < ranges.length; i++) {
         const eraseGfx = state.fogEraseGfx[i];
         if (!eraseGfx) { continue; }
@@ -560,8 +561,9 @@ export function updateFogOfWar() {
 
         state.fogRT.erase(eraseGfx);
     }
-
-    state.fogRT.render();
+    // No manual render() — the RT is in renderMode 'all', which flushes the
+    // queued commands inside its own render pass. Flushing from update()
+    // lands across the frame boundary and flickers on alternate frames.
 }
 
 // ─────────────────────────────────────────────

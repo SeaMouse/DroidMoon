@@ -188,6 +188,9 @@ export class GameScene extends Phaser.Scene {
         state.fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
         state.fogRT.setDepth(40);
         state.fogRT.setOrigin(0, 0);
+        // Flush queued draw commands inside the RT's own render pass (frame-
+        // atomic) rather than via a manual render() call from update().
+        state.fogRT.setRenderMode('all');
 
         // Persistent erase brushes for the fog light bands — reused every frame
         // by updateFogOfWar instead of allocating/destroying Graphics per frame.
