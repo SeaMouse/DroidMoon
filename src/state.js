@@ -20,6 +20,7 @@ export const state = {
     playerBullets: null,
     enemyBullets:  null,
     fogRT:         null,
+    fogEraseGfx:   [],
     aimLaser:      null,
     keys:          null,
 

@@ -16,6 +16,7 @@ import {
     deckDefinitions, weaponTypes, enemyTypes,
     AIM_LASER_MAX_RANGE, PLAYER_SPRITE_RADIUS, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
     PLAYER_KNOCKBACK_MS, ENEMY_BOUNCE_SPEED, ENEMY_BOUNCE_COOLDOWN_MS, CONE_RAY_COUNT,
+    LOS_CHECK_INTERVAL_MS,
     INPUT_DEAD_ZONE,
     DEBUG_LOGS
 } from './config.js';
@@ -32,7 +33,7 @@ export function tileToPixel(tileCoord) {
 }
 
 export function debugLog(...args) {
-    if (DEBUG_LOGS) { debugLog(...args); }
+    if (DEBUG_LOGS) { console.log(...args); }
 }
 
 export function makeCircleTexture(scene, key, colour, diameter) {
@@ -371,7 +372,11 @@ export function computeVisibilityPolygon(originX, originY) {
     return hits;
 }
 
-export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range) {
+// Casts the cone's rays and returns the sorted hit list. Callers can build a
+// polygon from this directly, or re-clamp the same hits to a shorter range via
+// clampConeHitsToRange() — the geometry only differs by the clamp, so multiple
+// concentric bands never need more than one set of raycasts.
+export function computeConeHits(originX, originY, facing, halfAngle, range) {
     const EPS      = 0.0001;
     const RANGE    = range;
     const RANGE_SQ = RANGE * RANGE;
@@ -425,7 +430,32 @@ export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle
     }
 
     hits.sort((a, b) => a.rel - b.rel);
+    return hits;
+}
 
+// Builds a fan polygon from cone hits, pulling any hit beyond `range` back
+// onto the arc. Reusing one hit list for several ranges skips re-raycasting.
+export function clampConeHitsToRange(hits, originX, originY, facing, range) {
+    const rangeSq = range * range;
+    const poly = [{ x: originX, y: originY }];
+    for (const hit of hits) {
+        const dx = hit.x - originX;
+        const dy = hit.y - originY;
+        if (dx * dx + dy * dy > rangeSq) {
+            const angle = facing + hit.rel;
+            poly.push({
+                x: originX + Math.cos(angle) * range,
+                y: originY + Math.sin(angle) * range,
+            });
+        } else {
+            poly.push({ x: hit.x, y: hit.y });
+        }
+    }
+    return poly;
+}
+
+export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle, range) {
+    const hits = computeConeHits(originX, originY, facing, halfAngle, range);
     const poly = [{ x: originX, y: originY }];
     for (const hit of hits) {
         poly.push({ x: hit.x, y: hit.y });
@@ -448,39 +478,44 @@ export function updateFogOfWar() {
     state.fogRT.clear();
     state.fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
 
+    // Cast the cone's rays ONCE at max range; the inner bands are the same
+    // rays clamped shorter, so they don't need their own raycast pass.
+    const hits = computeConeHits(
+        state.player.x, state.player.y, state.playerFacing, CONE_HALF_ANGLE, LIGHT_MAX_RANGE
+    );
+
     const ranges = [
         LIGHT_MAX_RANGE,
         LIGHT_MAX_RANGE * 2 / 3,
         LIGHT_MAX_RANGE * 1 / 3,
     ];
 
-    const eraseGfxList = [];
+    // One persistent brush per band (created in GameScene.create), reused every
+    // frame instead of allocating/destroying Graphics objects — avoids GC churn.
+    // Kept separate per band because erase ops aren't flushed until render().
+    for (let i = 0; i < ranges.length; i++) {
+        const eraseGfx = state.fogEraseGfx[i];
+        if (!eraseGfx) { continue; }
 
-    for (const range of ranges) {
-        const poly = computeConeVisibilityPolygon(
-            state.player.x, state.player.y, state.playerFacing, CONE_HALF_ANGLE, range
+        const poly = clampConeHitsToRange(
+            hits, state.player.x, state.player.y, state.playerFacing, ranges[i]
         );
         if (poly.length < 3) { continue; }
 
-        const eraseGfx = state.scene.make.graphics({ x: 0, y: 0 }, false);
+        eraseGfx.clear();
         eraseGfx.fillStyle(0xffffff, LIGHT_BAND_ERASE_ALPHA);
         eraseGfx.beginPath();
         eraseGfx.moveTo(poly[0].x, poly[0].y);
-        for (let i = 1; i < poly.length; i++) {
-            eraseGfx.lineTo(poly[i].x, poly[i].y);
+        for (let j = 1; j < poly.length; j++) {
+            eraseGfx.lineTo(poly[j].x, poly[j].y);
         }
         eraseGfx.closePath();
         eraseGfx.fillPath();
 
         state.fogRT.erase(eraseGfx);
-        eraseGfxList.push(eraseGfx);
     }
 
     state.fogRT.render();
-
-    for (const gfx of eraseGfxList) {
-        gfx.destroy();
-    }
 }
 
 // ─────────────────────────────────────────────
@@ -529,13 +564,24 @@ export class Enemy {
         this.lastStuckCheckPos  = { x: x, y: y };
         this.bounceCooldown     = 0;
         this.knockbackUntil     = 0;
+
+        // LOS is expensive (tile sampling along 3 lines), so it's checked on a
+        // timer rather than every frame. Random jitter de-syncs the enemies so
+        // their checks don't all land on the same frame.
+        this.losVisible       = false;
+        this.lastLosCheckTime = 0;
+        this.losCheckInterval = LOS_CHECK_INTERVAL_MS + Math.random() * 60;
     }
 
     update(time) {
         const sprite = this.sprite;
         const player = state.player;
 
-        const los          = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
+        if (time >= this.lastLosCheckTime + this.losCheckInterval) {
+            this.losVisible       = hasLineOfSight(player.x, player.y, sprite.x, sprite.y);
+            this.lastLosCheckTime = time;
+        }
+        const los          = this.losVisible;
         const distToPlayer = Phaser.Math.Distance.Between(sprite.x, sprite.y, player.x, player.y);
         const targetAlpha  = los ? 1 : 0;
         sprite.alpha += (targetAlpha - sprite.alpha) * 0.10;

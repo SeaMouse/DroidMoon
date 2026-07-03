@@ -38,6 +38,7 @@ export class GameScene extends Phaser.Scene {
 
     create() {
         state.scene = this;
+        state.wallLayer = null;   // cleared so a missing Obstacles layer is caught below
         state.gameOver = false;
         state.playerEnergy    = (state.playerEnergy > 0) ? state.playerEnergy : PLAYER_MAX_ENERGY;
         state.playerFacing    = 0;
@@ -66,6 +67,13 @@ export class GameScene extends Phaser.Scene {
                 layer.setCollisionByProperty({ obstacle: true });
             }
         }
+
+        if (!state.wallLayer) {
+            console.error('GameScene: map "' + deckDef.mapKey + '" has no "Obstacles" tile layer — ' +
+                'collision, nav graph and line-of-sight all depend on it. Check the layer name in Tiled.');
+            return;
+        }
+
         buildNavGraph(map);
         extractWallSegments();
         extractWallCorners();
@@ -180,6 +188,19 @@ export class GameScene extends Phaser.Scene {
         state.fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
         state.fogRT.setDepth(40);
         state.fogRT.setOrigin(0, 0);
+
+        // Persistent erase brushes for the fog light bands — reused every frame
+        // by updateFogOfWar instead of allocating/destroying Graphics per frame.
+        // Never added to the display list, so they must be destroyed by hand.
+        state.fogEraseGfx = [
+            this.make.graphics({ x: 0, y: 0 }, false),
+            this.make.graphics({ x: 0, y: 0 }, false),
+            this.make.graphics({ x: 0, y: 0 }, false),
+        ];
+        this.events.once('shutdown', () => {
+            for (const gfx of state.fogEraseGfx) { gfx.destroy(); }
+            state.fogEraseGfx = [];
+        });
 
         // --- Cached keyboard keys ---
         state.keys = this.input.keyboard.addKeys({

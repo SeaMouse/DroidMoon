@@ -161,6 +161,8 @@ export const ENEMY_BOUNCE_COOLDOWN_MS  = 220;  // ms before two enemies can boun
 
 export const CONE_RAY_COUNT            = 24;   // resolution of the visibility cone
 
+export const LOS_CHECK_INTERVAL_MS     = 120;  // ms between per-enemy line-of-sight checks
+
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA
 // ─────────────────────────────────────────────

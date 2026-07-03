@@ -56,19 +56,38 @@ export class Level1Scene extends Phaser.Scene {
         const map     = this.make.tilemap({ key: 'ship_exterior' });
         const tileset = map.addTilesetImage('tiles', 'tiles');
 
-        // Image layer — Phaser handles this separately from tile layers.
-        map.createLayer('Starfield', tileset, 0, 0);
+        // Image layer — createLayer() only handles tile layers, and Phaser doesn't
+        // auto-create image layers from the map. Add the loaded image directly,
+        // honouring any offset Tiled stored on the layer.
+        const starfieldData = map.images ? map.images.find(img => img.name === 'Starfield') : null;
+        this.add.image(
+            starfieldData ? starfieldData.x : 0,
+            starfieldData ? starfieldData.y : 0,
+            'starfield'
+        ).setOrigin(0).setDepth(-1);
 
         // Tile layers — iterate every one in the map, in Tiled's order.
+        // (Scene instances are reused on restart, so clear stale layer refs first.)
+        this.obstacleLayer = null;
+        this.hullLayer     = null;
         let depth = 0;
         for (const layerData of map.layers) {
             const layer = map.createLayer(layerData.name, tileset, 0, 0);
             if (!layer) { continue; }
             layer.setDepth(depth++);
+            if (layerData.name === 'Hull') {
+                this.hullLayer = layer;
+            }
             if (layerData.name === 'Obstacles') {
                 this.obstacleLayer = layer;
                 layer.setCollisionByProperty({ obstacle: true });
             }
+        }
+
+        if (!this.obstacleLayer) {
+            console.error('Level1: map "ship_exterior" has no "Obstacles" tile layer — ' +
+                'collision and bullet impacts depend on it. Check the layer name in Tiled.');
+            return;
         }
 
         this.obstacleLayer.setDepth(11);  // ← above shadow (10), below ship
@@ -100,8 +119,12 @@ export class Level1Scene extends Phaser.Scene {
         this.ship.setDepth(100);
 
         // Mask the shadow to the hull's footprint so it never spills onto the starfield.
-        this.shipShadow.enableFilters();
-        this.shipShadow.filters.external.addMask(this.hullLayer, false, this.cameras.main, 'world');
+        if (this.hullLayer) {
+            this.shipShadow.enableFilters();
+            this.shipShadow.filters.external.addMask(this.hullLayer, false, this.cameras.main, 'world');
+        } else {
+            console.warn('Level1: no "Hull" tile layer found — ship shadow will not be masked.');
+        }
 
         // Constrain physics world to the flight band (excludes sky margins + map edges).
         this.physics.world.setBounds(
