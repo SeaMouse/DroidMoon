@@ -200,7 +200,19 @@ export class GameScene extends Phaser.Scene {
             this.make.graphics({ x: 0, y: 0 }, false),
             this.make.graphics({ x: 0, y: 0 }, false),
         ];
+
+        // Aim input captured in update(), consumed by the POST_UPDATE pass.
+        this.aimInput = { out: false, x: 0, y: 0 };
+
+        // Player-anchored visuals (fog cone, aim laser) are drawn on
+        // POST_UPDATE — after arcade physics syncs body → sprite — so they
+        // use this frame's rendered player position, not last frame's.
+        // (Same fix as Level1's composeShadow; reading player.x in update()
+        // is one physics step stale and shimmers on non-60Hz displays.)
+        this.events.on('postupdate', this.postUpdateVisuals, this);
+
         this.events.once('shutdown', () => {
+            this.events.off('postupdate', this.postUpdateVisuals, this);
             for (const gfx of state.fogEraseGfx) { gfx.destroy(); }
             state.fogEraseGfx = [];
         });
@@ -275,7 +287,9 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        drawAimLaser(rsOut, rsx, rsy);
+        this.aimInput.out = rsOut;
+        this.aimInput.x   = rsx;
+        this.aimInput.y   = rsy;
 
         updateLiftHold(time, pad);
 
@@ -304,7 +318,14 @@ export class GameScene extends Phaser.Scene {
         if (Debug.rays.visible) {
             drawDebugRays();
         }
-        updateFogOfWar();
         drawDebugNavDynamic();
+    }
+
+    // Runs on the scene's POST_UPDATE event — player sprite is synced to its
+    // physics body by then, so these draw at the rendered position.
+    postUpdateVisuals() {
+        if (state.gameOver || !state.player) { return; }
+        drawAimLaser(this.aimInput.out, this.aimInput.x, this.aimInput.y);
+        updateFogOfWar();
     }
 }
