@@ -4,7 +4,7 @@ import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
 import { BulletPool } from '../systems.js';
 import {
-    CAMERA_ZOOM,SHIP_SCALE,
+    CAMERA_ZOOM, GAME_WIDTH, GAME_HEIGHT, SHIP_SCALE,
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
     SHIP_VERTICAL_SPEED, SHIP_FLIP_DURATION, SHIP_BARREL_ROLL_DURATION,SHIP_ROLL_DURATION,
     SHIP_INITIAL_FACING,
@@ -56,15 +56,18 @@ export class Level1Scene extends Phaser.Scene {
         const map     = this.make.tilemap({ key: 'ship_exterior' });
         const tileset = map.addTilesetImage('tiles', 'tiles');
 
-        // Image layer — createLayer() only handles tile layers, and Phaser doesn't
-        // auto-create image layers from the map. Add the loaded image directly,
-        // honouring any offset Tiled stored on the layer.
-        const starfieldData = map.images ? map.images.find(img => img.name === 'Starfield') : null;
-        this.add.image(
-            starfieldData ? starfieldData.x : 0,
-            starfieldData ? starfieldData.y : 0,
-            'starfield'
-        ).setOrigin(0).setDepth(-1);
+        // Starfield backdrop — fixed to the screen (scrollFactor 0), not the world,
+        // so the stars stay put while the ship hull scrolls past. Scaled to cover
+        // the whole viewport regardless of the source image size.
+        const starfield = this.add.image(0, 0, 'starfield')
+            .setOrigin(0)
+            .setScrollFactor(0)
+            .setDepth(-1);
+        const coverScale = Math.max(
+            GAME_WIDTH  / starfield.width,
+            GAME_HEIGHT / starfield.height
+        );
+        starfield.setScale(coverScale);
 
         // Tile layers — iterate every one in the map, in Tiled's order.
         // (Scene instances are reused on restart, so clear stale layer refs first.)
@@ -108,23 +111,56 @@ export class Level1Scene extends Phaser.Scene {
         this.ship = this.physics.add.sprite(spawnX, spawnY, 'manta_flip_start', 0);
         this.ship.setScale(SHIP_SCALE);
 
-        // Cast shadow: a duplicate of the ship, tinted black and offset, masked to the hull.
-        this.shipShadow = this.add.sprite(this.ship.x, this.ship.y, this.ship.texture.key, this.ship.frame.name);
+        // Cast shadow: a duplicate of the ship, tinted black and offset.
+        // It must only appear on the hull, never on the starfield. Phaser 4's
+        // mask filter can't do that cleanly here: the mask and the masked sprite
+        // are rendered at slightly different positions while moving (phaser#7096),
+        // which smears the shadow in the direction of travel at speed. Instead we
+        // composite it by hand each frame into a RenderTexture (same idiom as the
+        // fog of war): stamp the shadow, then erase a baked "space" stencil.
+        // Mask and shadow share a single draw, so they can never drift apart.
+        this.shipShadow = this.make.sprite({
+            x:     this.ship.x,
+            y:     this.ship.y,
+            key:   this.ship.texture.key,
+            frame: this.ship.frame.name,
+        }, false);   // never on the display list — only stamped into shadowRT
         this.shipShadow.setScale(SHIP_SCALE);
         this.shipShadow.setTint(0x000000);
         this.shipShadow.setAlpha(SHIP_SHADOW_ALPHA);
 
-        // Render above the tile layers (default depth 0) but below the ship.
-        this.shipShadow.setDepth(10);
         this.ship.setDepth(100);
 
-        // Mask the shadow to the hull's footprint so it never spills onto the starfield.
+        // Baked stencil: opaque everywhere EXCEPT the hull footprint.
+        // Erasing it from the shadow RT clips the shadow to the hull.
+        this.spaceMask = this.make.renderTexture(
+            { x: 0, y: 0, width: this.worldW, height: this.worldH }, false);
+        this.spaceMask.setOrigin(0, 0);
         if (this.hullLayer) {
-            this.shipShadow.enableFilters();
-            this.shipShadow.filters.external.addMask(this.hullLayer, false, this.cameras.main, 'world');
+            this.spaceMask.fill(0xffffff, 1);
+            this.spaceMask.erase(this.hullLayer);
+            this.spaceMask.render();
         } else {
-            console.warn('Level1: no "Hull" tile layer found — ship shadow will not be masked.');
+            console.warn('Level1: no "Hull" tile layer found — ship shadow will not be clipped to the hull.');
         }
+
+        // The composited shadow — above the tile layers (default depth 0),
+        // below obstacles (11) and the ship (100).
+        this.shadowRT = this.add.renderTexture(0, 0, this.worldW, this.worldH);
+        this.shadowRT.setOrigin(0, 0);
+        this.shadowRT.setDepth(10);
+        // 'all' mode flushes the queued draw commands during this RT's own
+        // render pass — in-frame, atomic with its display. Calling .render()
+        // manually from update() instead flushes outside the render pass,
+        // which lands on the wrong side of the frame boundary every other
+        // frame and makes the shadow flicker.
+        this.shadowRT.setRenderMode('all');
+
+        // Neither helper is on the display list, so destroy them by hand.
+        this.events.once('shutdown', () => {
+            this.shipShadow.destroy();
+            this.spaceMask.destroy();
+        });
 
         // Constrain physics world to the flight band (excludes sky margins + map edges).
         this.physics.world.setBounds(
@@ -467,6 +503,13 @@ export class Level1Scene extends Phaser.Scene {
         this.shipShadow.setRotation(this.ship.rotation);
         this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X * SHIP_SCALE;
         this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y * SHIP_SCALE;
+
+        // Composite the shadow: stamp it, then cut away everything that isn't
+        // hull. Commands are only queued here — renderMode 'all' flushes them
+        // during the RT's render pass, so the update is frame-atomic.
+        this.shadowRT.clear();
+        this.shadowRT.draw(this.shipShadow);
+        this.shadowRT.erase(this.spaceMask);
 
         // --- Twin laser fire ---
         const firing = this.shipFlipPhase !== 'yaw' && (

@@ -26,4 +26,10 @@ const config = {
     scene: [TitleScene, Level1Scene, GameScene, EndScene, DeckSelectScene]
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// Dev-only handle so browser-automation checks can reach the live game
+// (scenes, renderer) without a module-instance mismatch. Stripped in builds.
+if (import.meta.env.DEV) {
+    window.__game = game;
+}
