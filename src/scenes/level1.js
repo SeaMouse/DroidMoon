@@ -156,8 +156,18 @@ export class Level1Scene extends Phaser.Scene {
         // frame and makes the shadow flicker.
         this.shadowRT.setRenderMode('all');
 
+        // Sync + compose on POST_UPDATE, not in update(): arcade physics moves
+        // bodies before update() but only syncs body → sprite afterwards, so
+        // ship.x read inside update() is one physics step stale. That constant
+        // lag turns into visible flicker whenever render fps and the fixed
+        // 60 Hz physics step don't line up (e.g. high-refresh monitors).
+        // Physics registers its own postupdate listener first, so the sprite
+        // is up to date by the time this runs.
+        this.events.on('postupdate', this.composeShadow, this);
+
         // Neither helper is on the display list, so destroy them by hand.
         this.events.once('shutdown', () => {
+            this.events.off('postupdate', this.composeShadow, this);
             this.shipShadow.destroy();
             this.spaceMask.destroy();
         });
@@ -496,21 +506,6 @@ export class Level1Scene extends Phaser.Scene {
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
         this.cameras.main.setFollowOffset(this.shipCameraLead, 0);
 
-        // Keep the shadow in lockstep with the ship.
-        this.shipShadow.setTexture(this.ship.texture.key, this.ship.frame.name);
-        this.shipShadow.setFlipX(this.ship.flipX);
-        this.shipShadow.setFlipY(this.ship.flipY);
-        this.shipShadow.setRotation(this.ship.rotation);
-        this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X * SHIP_SCALE;
-        this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y * SHIP_SCALE;
-
-        // Composite the shadow: stamp it, then cut away everything that isn't
-        // hull. Commands are only queued here — renderMode 'all' flushes them
-        // during the RT's render pass, so the update is frame-atomic.
-        this.shadowRT.clear();
-        this.shadowRT.draw(this.shipShadow);
-        this.shadowRT.erase(this.spaceMask);
-
         // --- Twin laser fire ---
         const firing = this.shipFlipPhase !== 'yaw' && (
             this.cursors.space.isDown ||
@@ -595,6 +590,28 @@ export class Level1Scene extends Phaser.Scene {
                                'world vx: ' + worldVx.toFixed(1),
                                'turrets: ' + this.turrets.filter(t => t.alive).length + ' / ' + this.turrets.length,
         ].join('\n'));
+    }
+
+    // Runs on the scene's POST_UPDATE event — after arcade physics has synced
+    // the ship sprite to its body — so the shadow uses this frame's rendered
+    // ship position, not last frame's (see listener registration in create).
+    composeShadow() {
+        if (!this.ship || !this.ship.active || !this.shadowRT) { return; }
+
+        // Keep the shadow in lockstep with the ship.
+        this.shipShadow.setTexture(this.ship.texture.key, this.ship.frame.name);
+        this.shipShadow.setFlipX(this.ship.flipX);
+        this.shipShadow.setFlipY(this.ship.flipY);
+        this.shipShadow.setRotation(this.ship.rotation);
+        this.shipShadow.x = this.ship.x + SHIP_SHADOW_OFFSET_X * SHIP_SCALE;
+        this.shipShadow.y = this.ship.y + SHIP_SHADOW_OFFSET_Y * SHIP_SCALE;
+
+        // Composite: stamp the shadow, then cut away everything that isn't
+        // hull. Commands are only queued here — renderMode 'all' flushes them
+        // during the RT's render pass, so the update is frame-atomic.
+        this.shadowRT.clear();
+        this.shadowRT.draw(this.shipShadow);
+        this.shadowRT.erase(this.spaceMask);
     }
 
     startFlip() {
