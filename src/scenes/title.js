@@ -51,7 +51,7 @@ export class TitleScene extends Phaser.Scene {
             duration: 700, yoyo: true, repeat: -1
         });
 
-        this.input.keyboard.once('keydown', () => this.scene.start('GameScene'));
+        this.input.keyboard.once('keydown', () => this.scene.start('Level1Scene'));   // 'GameScene'
         this._padStarted = false;
     }
 
@@ -62,7 +62,7 @@ export class TitleScene extends Phaser.Scene {
         for (const btn of pad.buttons) {
             if (btn && btn.pressed) {
                 this._padStarted = true;
-                this.scene.start('GameScene');
+                this.scene.start('Level1Scene');   //'GameScene'
                 return;
             }
         }
