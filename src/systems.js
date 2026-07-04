@@ -11,13 +11,14 @@ import {
     PLAYER_MAX_ENERGY, INVINCIBILITY_MS,
     ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT,
     LIFT_HOLD_MS,
-    FOG_DARKNESS, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
+    FOG_DARKNESS, FOG_DARKNESS_LIT, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
     AIM_LASER_MAX_RANGE, PLAYER_SPRITE_RADIUS, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
     PLAYER_KNOCKBACK_MS, ENEMY_BOUNCE_SPEED, ENEMY_BOUNCE_COOLDOWN_MS, CONE_RAY_COUNT,
     CONE_BISECT_MAX_DEPTH, CONE_BISECT_MIN_ANGLE, CONE_BISECT_TOLERANCE_PX,
     LOS_CHECK_INTERVAL_MS,
+    DOOR_PROXIMITY, DOOR_OPEN_MS, DOOR_LOCKED_TINT,
     INPUT_DEAD_ZONE,
     DEBUG_LOGS
 } from './config.js';
@@ -238,7 +239,28 @@ export function hasLineOfSight(x1, y1, x2, y2, width) {
             if (tile && tile.collides) { return false; }
         }
     }
+
+    // Doors block sight like walls do, but they're segments, not tiles.
+    // (Doors.segments is empty during buildNavGraph — parseDoors runs after
+    // it — so waypoint links form through doorways; only live LOS is cut.)
+    for (const seg of Doors.segments) {
+        if (segmentsIntersect(x1, y1, x2, y2, seg.x1, seg.y1, seg.x2, seg.y2)) {
+            return false;
+        }
+    }
     return true;
+}
+
+// Segment-segment intersection test — used for door occlusion, where the
+// blocker is a thin moving segment rather than a grid of tiles.
+function segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+    const d1x = bx - ax, d1y = by - ay;
+    const d2x = dx - cx, d2y = dy - cy;
+    const denom = d1x * d2y - d1y * d2x;
+    if (Math.abs(denom) < 1e-9) { return false; }
+    const t = ((cx - ax) * d2y - (cy - ay) * d2x) / denom;
+    const u = ((cx - ax) * d1y - (cy - ay) * d1x) / denom;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
 // ─────────────────────────────────────────────
@@ -313,7 +335,7 @@ export function extractWallCorners() {
 // ─────────────────────────────────────────────
 //  RAYCASTING — line vs segment intersection
 // ─────────────────────────────────────────────
-export function castRay(originX, originY, angle) {
+export function castRay(originX, originY, angle, segments = state.wallSegments) {
     const rdx = Math.cos(angle);
     const rdy = Math.sin(angle);
 
@@ -321,7 +343,7 @@ export function castRay(originX, originY, angle) {
     let hitX = originX + rdx * 10000;
     let hitY = originY + rdy * 10000;
 
-    for (const seg of state.wallSegments) {
+    for (const seg of segments) {
         const sdx = seg.x2 - seg.x1;
         const sdy = seg.y2 - seg.y1;
 
@@ -373,6 +395,23 @@ export function computeVisibilityPolygon(originX, originY) {
     return hits;
 }
 
+// Squared distance from a point to a line segment — the broad-phase test for
+// culling wall segments that can't affect a range-clamped cone.
+function segmentDistSq(px, py, x1, y1, x2, y2) {
+    const dx    = x2 - x1;
+    const dy    = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / lenSq;
+    if (t < 0) { t = 0; } else if (t > 1) { t = 1; }
+    const cx = x1 + t * dx - px;
+    const cy = y1 + t * dy - py;
+    return cx * cx + cy * cy;
+}
+
+// Persistent scratch list for the cone's culled segments — reused every frame
+// instead of allocating a new array (same GC-avoidance idiom as fogEraseGfx).
+const coneNearSegments = [];
+
 // Casts the cone's rays and returns the sorted hit list. Callers can build a
 // polygon from this directly, or re-clamp the same hits to a shorter range via
 // clampConeHitsToRange() — the geometry only differs by the clamp, so multiple
@@ -382,6 +421,28 @@ export function computeConeHits(originX, originY, facing, halfAngle, range) {
     const RANGE    = range;
     const RANGE_SQ = RANGE * RANGE;
 
+    // --- Broad-phase cull, once per cone ---
+    // Every hit past RANGE gets clamped onto the range arc below, so a segment
+    // whose closest point is beyond RANGE can only ever produce clamped hits —
+    // identical output to not testing it at all. Cull those once here, then
+    // every ray (uniform, corner and bisection alike) casts against the small
+    // survivor list instead of the whole map: O(segments + rays·near) instead
+    // of O(rays·segments).
+    coneNearSegments.length = 0;
+    for (const seg of state.wallSegments) {
+        if (segmentDistSq(originX, originY, seg.x1, seg.y1, seg.x2, seg.y2) <= RANGE_SQ) {
+            coneNearSegments.push(seg);
+        }
+    }
+    // Closed (or closing) doors occlude light exactly like walls; their
+    // segments are rebuilt each frame by updateDoors so a sliding slab
+    // shortens its shadow as it opens.
+    for (const seg of Doors.segments) {
+        if (segmentDistSq(originX, originY, seg.x1, seg.y1, seg.x2, seg.y2) <= RANGE_SQ) {
+            coneNearSegments.push(seg);
+        }
+    }
+
     function relAngle(a) {
         let d = a - facing;
         while (d >  Math.PI) d -= 2 * Math.PI;
@@ -390,7 +451,7 @@ export function computeConeHits(originX, originY, facing, halfAngle, range) {
     }
 
     function castClamped(angle) {
-        const hit = castRay(originX, originY, angle);
+        const hit = castRay(originX, originY, angle, coneNearSegments);
         const dx  = hit.x - originX;
         const dy  = hit.y - originY;
         if (dx * dx + dy * dy > RANGE_SQ) {
@@ -515,14 +576,14 @@ export function computeConeVisibilityPolygon(originX, originY, facing, halfAngle
 export function updateFogOfWar() {
     if (!state.fogRT) { return; }
 
-    if (!isDeckCleared()) {
-        state.fogRT.setVisible(false);
-        return;
-    }
-    state.fogRT.setVisible(true);
+    // The headlight is always on; the deck's own lights decide how much it
+    // matters. Powered deck → a subtle ambient dim the cone cuts through;
+    // shut-down deck → near-black fog and the cone is your only vision.
+    const darkness = isDeckCleared() ? FOG_DARKNESS : FOG_DARKNESS_LIT;
 
+    state.fogRT.setVisible(true);
     state.fogRT.clear();
-    state.fogRT.fill(FOG_COLOUR, FOG_DARKNESS);
+    state.fogRT.fill(FOG_COLOUR, darkness);
 
     // Cast the cone's rays ONCE at max range; the inner bands are the same
     // rays clamped shorter, so they don't need their own raycast pass.
@@ -879,6 +940,246 @@ export function switchToDeck(targetDeck) {
 }
 
 // ─────────────────────────────────────────────
+//  DOOR SYSTEM
+// ─────────────────────────────────────────────
+//  Sliding doors from the map's "Doors" object layer. Each marker sits at
+//  the pocket edge the slab slides in and out of: the LEFT end of a horiz
+//  door, the TOP end of a vert door. The doorway length is measured from
+//  the gap in the Obstacles layer, so doors fit whatever opening they're
+//  placed in. Unlocked doors open for anyone (player or enemy) nearby;
+//  locked doors never open and are solid to everything.
+export const Doors = {
+    list:       [],   // door records
+    segments:   [],   // live occluder segments (rebuilt each frame — LOS, fog, laser)
+    blockGroup: null, // every door body — bullets collide with these
+    solidGroup: null, // locked doors only — player + enemies collide with these
+};
+
+// Clear module state from a previous deck. Must run before buildNavGraph so
+// stale door segments can't block waypoint linking on the new deck.
+export function resetDoors() {
+    Doors.list       = [];
+    Doors.segments   = [];
+    Doors.blockGroup = null;
+    Doors.solidGroup = null;
+}
+
+export function parseDoors(map) {
+    resetDoors();
+
+    let objLayer = map.getObjectLayer('Doors');
+    if (!objLayer) {
+        const raw = map.objects ? map.objects.find(l => l.name === 'Doors') : null;
+        if (raw) { objLayer = raw; }
+    }
+    if (!objLayer) {
+        debugLog('DOORS: No "Doors" object layer on this deck.');
+        return;
+    }
+
+    const scene = state.scene;
+    // Physics groups re-apply their default body config to every child added
+    // (PhysicsGroup.createCallbackHandler), so immovable/gravity MUST be set
+    // here in the group config — flags set on the body before add() get wiped.
+    Doors.blockGroup = scene.physics.add.group({ immovable: true, allowGravity: false });
+    Doors.solidGroup = scene.physics.add.group({ immovable: true, allowGravity: false });
+
+    for (const obj of objLayer.objects) {
+        const props  = {};
+        for (const p of (obj.properties || [])) { props[p.name] = p.value; }
+
+        const horiz  = props.orientation !== 'vert';
+        const locked = !!props.locked;
+
+        // Snap the hand-placed marker to the grid. Along the slide axis it
+        // marks the pocket mouth → nearest tile edge. Across the doorway it
+        // marks the door's centre line → nearest HALF-tile step, so it lands
+        // on a tile boundary for walls two tiles thick (this map) and on a
+        // tile centre for walls one tile thick.
+        const HALF = TILE_SIZE / 2;
+        let ax, ay, cx, cy, startTx, startTy;
+        if (horiz) {
+            ax      = Math.round(obj.x / TILE_SIZE) * TILE_SIZE;
+            startTx = ax / TILE_SIZE;
+            startTy = Math.floor(obj.y / TILE_SIZE);
+            cy      = Math.round(obj.y / HALF) * HALF;
+        } else {
+            ay      = Math.round(obj.y / TILE_SIZE) * TILE_SIZE;
+            startTy = ay / TILE_SIZE;
+            startTx = Math.floor(obj.x / TILE_SIZE);
+            cx      = Math.round(obj.x / HALF) * HALF;
+        }
+
+        // Measure the doorway: walk from the pocket mouth until the far jamb.
+        let gapTiles = 0;
+        while (gapTiles < 16 && !isWallTile(state.wallLayer,
+            horiz ? startTx + gapTiles : startTx,
+            horiz ? startTy : startTy + gapTiles)) {
+            gapTiles++;
+        }
+        if (gapTiles === 0 || gapTiles >= 16) {
+            console.warn('DOORS: marker at (' + obj.x + ',' + obj.y + ') is not at ' +
+                'the edge of an Obstacles gap — skipping.');
+            continue;
+        }
+        const length  = gapTiles * TILE_SIZE;
+        const centerX = horiz ? ax + length / 2 : cx;
+        const centerY = horiz ? cy : ay + length / 2;
+
+        // Door sprite. Origin (0,0) with a floor()ed cross-axis position
+        // keeps the static edges on whole pixels — with roundPixels on, a
+        // half-pixel edge rounds at a different camera scroll than the
+        // tilemap does and the door appears to wiggle against the map.
+        const img = scene.add.image(0, 0, horiz ? 'door_horiz' : 'door_vert');
+        img.setOrigin(0, 0);
+        img.setDepth(30);   // above floor + entities, below fog (40) and laser (45)
+        const texLen   = horiz ? img.width  : img.height;
+        const texThick = horiz ? img.height : img.width;
+        let cross0;   // fixed cross-axis top/left of the slab
+        if (horiz) {
+            cross0 = cy - Math.floor(texThick / 2);
+            img.setPosition(ax, cross0);
+            if (texLen !== length) { img.scaleX = length / texLen; }
+        } else {
+            cross0 = cx - Math.floor(texThick / 2);
+            img.setPosition(cross0, ay);
+            if (texLen !== length) { img.scaleY = length / texLen; }
+        }
+        if (locked) { img.setTint(DOOR_LOCKED_TINT); }
+
+        // Invisible rectangle carrying the arcade body. The body is resized
+        // to the visible slab whenever the door animates.
+        const blocker = scene.add.rectangle(
+            centerX, centerY,
+            horiz ? length : texThick,
+            horiz ? texThick : length
+        ).setVisible(false);
+        scene.physics.add.existing(blocker);
+        Doors.blockGroup.add(blocker);
+        if (locked) { Doors.solidGroup.add(blocker); }
+        // After the group adds (their defaults run last). pushable isn't in
+        // the group defaults, but immovable already prevents displacement —
+        // this is belt-and-braces so a door body can never be nudged.
+        blocker.body.pushable = false;
+
+        Doors.list.push({
+            horiz, locked, ax, ay, cx, cy, length, centerX, centerY,
+            img, texLen, texThick, cross0,
+            openT:     0,      // 0 = closed, 1 = slid fully into the pocket
+            prevOpenT: -1,     // forces the first pose sync
+            blocker,
+            seg: { x1: 0, y1: 0, x2: 0, y2: 0 },   // reused occluder segment
+        });
+    }
+
+    debugLog('DOORS: Parsed ' + Doors.list.length + ' door(s) on ' + state.currentDeck + '.');
+    updateDoors(0);   // sync bodies, segments and visuals to the closed state
+}
+
+// Locked doors never open, so waypoint links that cross them are dead ends —
+// drop them so pathing enemies don't pile into a sealed doorway.
+export function pruneNavLinksBlockedByDoors() {
+    const lockedDoors = Doors.list.filter(d => d.locked);
+    if (lockedDoors.length === 0) { return; }
+
+    for (const node of state.navNodes) {
+        node.neighbours = node.neighbours.filter(id => {
+            const nb = state.navNodes[id];
+            return !lockedDoors.some(d => segmentsIntersect(
+                node.x, node.y, nb.x, nb.y,
+                d.horiz ? d.ax : d.cx,            d.horiz ? d.cy : d.ay,
+                d.horiz ? d.ax + d.length : d.cx, d.horiz ? d.cy : d.ay + d.length
+            ));
+        });
+    }
+}
+
+export function updateDoors(delta) {
+    if (Doors.list.length === 0) { return; }
+
+    const step   = DOOR_OPEN_MS > 0 ? delta / DOOR_OPEN_MS : 1;
+    const proxSq = DOOR_PROXIMITY * DOOR_PROXIMITY;
+
+    Doors.segments.length = 0;
+
+    for (const door of Doors.list) {
+        // --- Proximity: anyone close to an unlocked door opens it ---
+        let wantOpen = false;
+        if (!door.locked) {
+            const pdx = state.player.x - door.centerX;
+            const pdy = state.player.y - door.centerY;
+            wantOpen = pdx * pdx + pdy * pdy <= proxSq;
+            if (!wantOpen) {
+                for (const enemy of state.enemies) {
+                    const edx = enemy.sprite.x - door.centerX;
+                    const edy = enemy.sprite.y - door.centerY;
+                    if (edx * edx + edy * edy <= proxSq) { wantOpen = true; break; }
+                }
+            }
+        }
+
+        door.openT = Phaser.Math.Clamp(door.openT + (wantOpen ? step : -step), 0, 1);
+
+        // Visible slab: anchored at the pocket mouth, retracting toward it.
+        const vis  = door.length * (1 - door.openT);
+        const open = vis < 1;
+
+        // --- Occluder segment (slab centre line) for LOS / fog / laser ---
+        if (!open) {
+            const seg = door.seg;
+            if (door.horiz) {
+                seg.x1 = door.ax;       seg.y1 = door.cy;
+                seg.x2 = door.ax + vis; seg.y2 = door.cy;
+            } else {
+                seg.x1 = door.cx;       seg.y1 = door.ay;
+                seg.x2 = door.cx;       seg.y2 = door.ay + vis;
+            }
+            Doors.segments.push(seg);
+        }
+
+        // --- Sprite + physics body follow the slab (only when it moved) ---
+        if (door.openT !== door.prevOpenT) {
+            door.prevOpenT = door.openT;
+            syncDoorPose(door, vis, open);
+        }
+    }
+}
+
+// Positions the door sprite and body for the current slide. The slab moves
+// into the pocket and the pocketed part is cropped away (in texture space,
+// so the art never squashes), leaving the visible run anchored in the
+// doorway at [pocket mouth, pocket mouth + vis].
+function syncDoorPose(door, vis, open) {
+    const img  = door.img;
+    const body = door.blocker.body;
+
+    if (open) {
+        img.setVisible(false);
+        body.enable = false;
+        return;
+    }
+
+    const slide   = door.length  * door.openT;   // world px into the pocket
+    const cropOfs = door.texLen  * door.openT;   // same, in texture px
+    const cropLen = door.texLen  - cropOfs;
+
+    img.setVisible(true);
+    body.enable = true;
+
+    if (door.horiz) {
+        img.x = door.ax - slide;
+        img.setCrop(cropOfs, 0, cropLen, door.texThick);
+        body.setSize(vis, door.texThick, true);
+        body.reset(door.ax + vis / 2, door.cross0 + door.texThick / 2);
+    } else {
+        img.y = door.ay - slide;
+        img.setCrop(0, cropOfs, door.texThick, cropLen);
+        body.setSize(door.texThick, vis, true);
+        body.reset(door.cross0 + door.texThick / 2, door.ay + vis / 2);
+    }
+}
+
+// ─────────────────────────────────────────────
 //  DECK STATE
 // ─────────────────────────────────────────────
 export function saveDeckState(deckName) {
@@ -953,6 +1254,10 @@ export function applyDeckDim() {
         const isLight = tile.properties && tile.properties.light;
         tile.tint = isLight ? 0xffffff : DIM_COLOUR;
     });
+    // Door sprites dim with the deck (lock tint reads as unpowered too).
+    for (const door of Doors.list) {
+        door.img.setTint(DIM_COLOUR);
+    }
 }
 
 export function checkDeckClearance() {
@@ -1047,6 +1352,31 @@ export function updateHUD() {
     state.energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
 
     state.killText.setText('Destroyed: ' + state.killCount);
+}
+
+// ─────────────────────────────────────────────
+//  FPS COUNTER
+// ─────────────────────────────────────────────
+// Bottom-left frame-rate readout, shared by every scene that wants one.
+// Samples Phaser's smoothed actualFps a few times a second — rewriting the
+// text every frame would cost frame time and make the number unreadable.
+export function createFpsCounter(scene) {
+    const txt = scene.add.text(8, scene.scale.height - 8, '-- fps', {
+        fontFamily: 'monospace', fontSize: '8px', fill: '#ffee00',
+        backgroundColor: '#000000aa', padding: { x: 3, y: 1 },
+    }).setOrigin(0, 1).setScrollFactor(0).setDepth(250);
+
+    scene.time.addEvent({
+        delay:    250,
+        loop:     true,
+        callback: () => {
+            txt.setText(scene.game.loop.actualFps.toFixed(1) + ' fps');
+        },
+    });
+    // Both the text object and the timer are owned by the scene, so they're
+    // cleaned up automatically on shutdown — no manual teardown needed.
+
+    return txt;
 }
 
 // ─────────────────────────────────────────────
@@ -1224,7 +1554,7 @@ export function drawAimLaser(rsOut, rsx, rsy) {
     if (!state.aimLaser) { return; }
     state.aimLaser.clear();
 
-    if (!rsOut || isDeckCleared()) { return; }
+    if (!rsOut) { return; }
 
     const angle         = Math.atan2(rsy, rsx);
 
@@ -1232,13 +1562,20 @@ export function drawAimLaser(rsOut, rsx, rsy) {
     const startX = state.player.x + Math.cos(angle) * PLAYER_SPRITE_RADIUS;
     const startY = state.player.y + Math.sin(angle) * PLAYER_SPRITE_RADIUS;
 
-    // Find where the beam should end: AIM_LASER_MAX_RANGE, or sooner if a wall blocks it.
-    const hit        = castRay(startX, startY, angle);
+    // Find where the beam should end: AIM_LASER_MAX_RANGE, or sooner if a
+    // wall — or a closed door — blocks it.
+    let hit = castRay(startX, startY, angle);
+    if (Doors.segments.length > 0) {
+        const doorHit = castRay(startX, startY, angle, Doors.segments);
+        if (doorHit.dist < hit.dist) { hit = doorHit; }
+    }
     const distToWall = Phaser.Math.Distance.Between(startX, startY, hit.x, hit.y);
     const drawLength = Math.min(AIM_LASER_MAX_RANGE, distToWall);
 
     // Fade is anchored to AIM_LASER_MAX_RANGE so the gradient rate stays constant
-    // even when the beam is cut short by a wall.
+    // even when the beam is cut short by a wall. Two passes per segment: a wide
+    // faint glow under a thin core — with the Graphics in ADD blend mode the
+    // overlap reads as light rather than a painted stripe.
     const SEGMENTS = 20;
     for (let i = 0; i < SEGMENTS; i++) {
         const d1 = (i / SEGMENTS) * drawLength;
@@ -1251,13 +1588,26 @@ export function drawAimLaser(rsOut, rsx, rsy) {
         const y2 = startY + Math.sin(angle) * d2;
 
         // Alpha is based on absolute distance / AIM_LASER_MAX_RANGE, not segment index.
-        const alpha = (1 - d1 / AIM_LASER_MAX_RANGE) * 0.7;
+        const fade = 1 - d1 / AIM_LASER_MAX_RANGE;
 
-        state.aimLaser.lineStyle(2, 0xff4444, alpha);
+        state.aimLaser.lineStyle(3, 0xff2222, fade * 0.10);
         state.aimLaser.beginPath();
         state.aimLaser.moveTo(x1, y1);
         state.aimLaser.lineTo(x2, y2);
         state.aimLaser.strokePath();
+
+        state.aimLaser.lineStyle(1, 0xff7755, fade * 0.35);
+        state.aimLaser.beginPath();
+        state.aimLaser.moveTo(x1, y1);
+        state.aimLaser.lineTo(x2, y2);
+        state.aimLaser.strokePath();
+    }
+
+    // Impact dot where the beam actually reaches a wall inside its range.
+    if (distToWall <= AIM_LASER_MAX_RANGE) {
+        const fade = 1 - distToWall / AIM_LASER_MAX_RANGE;
+        state.aimLaser.fillStyle(0xffaa88, 0.25 + fade * 0.45);
+        state.aimLaser.fillCircle(hit.x, hit.y, 1.5);
     }
 }
 

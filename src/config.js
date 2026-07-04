@@ -20,7 +20,8 @@ export const ENERGY_BAR_HEIGHT = 8;
 
 export const LIFT_HOLD_MS = 2000;
 
-export const FOG_DARKNESS           = 0.85;
+export const FOG_DARKNESS           = 0.85; // deck shut down — near-black outside the headlight
+export const FOG_DARKNESS_LIT       = 0.30; // deck still powered — headlight reads as a subtle brightening
 export const FOG_COLOUR             = 0x000011;
 export const LIGHT_MAX_RANGE        = 550;
 export const CONE_HALF_ANGLE        = Math.PI / 5;
@@ -168,6 +169,13 @@ export const CONE_BISECT_MIN_ANGLE     = 0.002; // rad — stop splitting below 
 export const CONE_BISECT_TOLERANCE_PX  = 2;     // deviation below this = chord matches the wall
 
 export const LOS_CHECK_INTERVAL_MS     = 120;  // ms between per-enemy line-of-sight checks
+
+// ─────────────────────────────────────────────
+//  DOORS
+// ─────────────────────────────────────────────
+export const DOOR_PROXIMITY    = 90;   // px — unlocked doors open when someone is this close
+export const DOOR_OPEN_MS      = 260;  // ms — full slide open (and closed) travel time
+export const DOOR_LOCKED_TINT  = 0xff8888;  // reddish cast on locked door sprites
 
 // ─────────────────────────────────────────────
 //  LEVEL 1 — MANTA

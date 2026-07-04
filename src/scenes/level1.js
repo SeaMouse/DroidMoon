@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
 import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
-import { BulletPool } from '../systems.js';
+import { BulletPool, createFpsCounter } from '../systems.js';
 import {
     CAMERA_ZOOM, GAME_WIDTH, GAME_HEIGHT, SHIP_SCALE,
     SHIP_SPEED_LEVELS, SHIP_GEAR_UP_MS, SHIP_GEAR_DOWN_MS,
@@ -304,6 +304,7 @@ export class Level1Scene extends Phaser.Scene {
         }).setScrollFactor(0).setDepth(100);
 
         this.createShipHUD();
+        createFpsCounter(this);
     }
 
     update(time, delta) {

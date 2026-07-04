@@ -10,9 +10,10 @@ import {
     Lifts, Debug,
     buildNavGraph, extractWallSegments, extractWallCorners,
     parseLiftZones, updateLiftHold,
-    spawnEnemiesForDeck, isDeckCleared,
+    Doors, resetDoors, parseDoors, updateDoors, pruneNavLinksBlockedByDoors,
+    spawnEnemiesForDeck,
     applyDeckDim, checkDeckClearance,
-    createHUD,
+    createHUD, createFpsCounter,
     fireBullet,
     bulletHitEnemy, playerHitByEnemyBullet,
     onPlayerEnemyCollide, onEnemyEnemyCollide,
@@ -30,6 +31,8 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         this.load.image('tiles', 'assets/poc_tiles.png');
+        this.load.image('door_horiz', 'assets/door_horiz.png');
+        this.load.image('door_vert', 'assets/door_vert.png');
 
         for (const [deckName, def] of Object.entries(deckDefinitions)) {
             this.load.tilemapTiledJSON(def.mapKey, def.mapFile);
@@ -49,6 +52,9 @@ export class GameScene extends Phaser.Scene {
         Lifts.playerOn   = null;
         Lifts.holdStart  = 0;
         Lifts.inputGated = false;
+        // Must clear before buildNavGraph — stale door segments from the
+        // previous deck would block waypoint linking via hasLineOfSight.
+        resetDoors();
 
         const deckDef = deckDefinitions[state.currentDeck];
         if (!deckDef) {
@@ -143,6 +149,25 @@ export class GameScene extends Phaser.Scene {
         this.physics.add.collider(state.enemyGroup, state.enemyGroup, onEnemyEnemyCollide);
         this.physics.add.overlap(state.playerBullets.group, state.enemyGroup, bulletHitEnemy);
 
+        // --- Doors ---
+        // Parsed after the nav graph so waypoint links form through (closed)
+        // doorways, and after player/enemies so the initial sync can run.
+        parseDoors(map);
+        pruneNavLinksBlockedByDoors();
+        if (Doors.blockGroup) {
+            // Bullets always collide with door slabs...
+            this.physics.add.collider(state.playerBullets.group, Doors.blockGroup, (bullet) => {
+                state.playerBullets.deactivate(bullet);
+            });
+            this.physics.add.collider(state.enemyBullets.group, Doors.blockGroup, (bullet) => {
+                state.enemyBullets.deactivate(bullet);
+            });
+            // ...but bodies only stop the player/enemies when a door is locked;
+            // unlocked doors open before anyone reaches them.
+            this.physics.add.collider(state.player, Doors.solidGroup);
+            this.physics.add.collider(state.enemyGroup, Doors.solidGroup);
+        }
+
         // --- Lift zones ---
         Lifts.zoneGroup = this.physics.add.staticGroup();
         parseLiftZones(map);
@@ -180,9 +205,13 @@ export class GameScene extends Phaser.Scene {
         // --- Aim laser ---
         state.aimLaser = this.add.graphics();
         state.aimLaser.setDepth(45);
+        // Additive blend so the glow+core passes in drawAimLaser sum into a
+        // light-like beam instead of stacking as opaque red paint.
+        state.aimLaser.setBlendMode(Phaser.BlendModes.ADD);
 
         // --- HUD ---
         createHUD(this);
+        createFpsCounter(this);
 
         // --- Fog render texture ---
         state.fogRT = this.add.renderTexture(0, 0, mapWidth, mapHeight);
@@ -249,7 +278,7 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
-    update(time) {
+    update(time, delta) {
         if (state.gameOver) { return; }
 
         state.player.setVelocity(0);
@@ -275,16 +304,14 @@ export class GameScene extends Phaser.Scene {
             state.playerFacing = Math.atan2(pad.leftStick.y, pad.leftStick.x);
         }
 
-        if (!isDeckCleared()) {
-            const firePressed = state.keys.space.isDown ||
+        const firePressed = state.keys.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].pressed);
 
-            if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + BULLET_COOLDOWN) {
-                const aimX = Math.cos(state.playerFacing);
-                const aimY = Math.sin(state.playerFacing);
-                fireBullet(state.player.x, state.player.y, aimX, aimY);
-                state.lastShotTime = time;
-            }
+        if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + BULLET_COOLDOWN) {
+            const aimX = Math.cos(state.playerFacing);
+            const aimY = Math.sin(state.playerFacing);
+            fireBullet(state.player.x, state.player.y, aimX, aimY);
+            state.lastShotTime = time;
         }
 
         this.aimInput.out = rsOut;
@@ -292,6 +319,9 @@ export class GameScene extends Phaser.Scene {
         this.aimInput.y   = rsy;
 
         updateLiftHold(time, pad);
+
+        // Before the enemy loop so their LOS checks see this frame's slabs.
+        updateDoors(delta);
 
         for (const enemy of state.enemies) {
             enemy.update(time);
