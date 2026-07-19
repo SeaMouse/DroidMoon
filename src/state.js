@@ -9,12 +9,15 @@
 //  but that's a bigger refactor. For now: shared module state.
 // ─────────────────────────────────────────────
 
-import { PLAYER_MAX_ENERGY } from './config.js';
+import {
+    PLAYER_MAX_HULL, PLAYER_MAX_SHIELD_BASE, REACTOR_BASE_OUTPUT,
+} from './config.js';
 
 export const state = {
     // --- Scene singletons (assigned in create) ---
     scene:         null,
     player:        null,
+    playerTop:     null,
     wallLayer:     null,
     enemyGroup:    null,
     playerBullets: null,
@@ -26,16 +29,41 @@ export const state = {
 
     // --- Game state ---
     gameOver:         false,
-    playerEnergy:     PLAYER_MAX_ENERGY,
     playerInvincible: false,
     playerFacing:     0,
     lastShotTime:     0,
     killCount:        0,
 
+    // --- Hull & shield ---
+    // Hull is the old "energy" bar: no regen, death at 0. Shield is a
+    // regenerating buffer that absorbs damage first; its ceiling and
+    // regen rate depend on items and shield pips (see power.js).
+    hull:          PLAYER_MAX_HULL,
+    hullMax:       PLAYER_MAX_HULL,
+    shield:        PLAYER_MAX_SHIELD_BASE,
+    shieldMax:     PLAYER_MAX_SHIELD_BASE,
+    shieldMaxBase: PLAYER_MAX_SHIELD_BASE,  // before pip multiplier (base + item bonuses)
+
+    // --- Power distribution (reactor pips) ---
+    power: { reactorOutput: REACTOR_BASE_OUTPUT, weapons: 2, shields: 2, drive: 2 },
+
+    // --- Inventory ---
+    inventory: {
+        collectedIds:     new Set(),  // pickup ids ('deck1:cfg:0') — never respawn
+        items:            [],         // [{ itemId, count }]
+        equippedWeaponId: 'blaster',
+    },
+    currentWeaponStats: null,  // derived cache — see power.recomputePowerDerived()
+
+    // --- Manta ship effects (from mantaCompatible items) ---
+    mantaEffects: { speedMult: 1, damageMult: 1 },
+
     // --- HUD references ---
-    energyBarFill: null,
-    killText:      null,
-    deckLabel:     null,
+    hud: null,   // bag of HUD game objects, owned by systems.createHUD
+
+    // --- Quest progress ---
+    unlockedCodes: new Set(),   // door codeIds opened remotely (terminals)
+    usedTerminals: new Set(),   // terminal ids already activated
 
     // --- Multi-deck system ---
     currentDeck:    'deck1',
@@ -57,8 +85,26 @@ export function resetGameState() {
     state.currentDeck    = 'deck1';
     state.playerSpawnPos = null;
     state.lastDeck       = null;
-    state.playerEnergy     = PLAYER_MAX_ENERGY;
     state.killCount        = 0;
     state.gameOver         = false;
     state.playerInvincible = false;
+
+    state.hull          = PLAYER_MAX_HULL;
+    state.hullMax       = PLAYER_MAX_HULL;
+    state.shield        = PLAYER_MAX_SHIELD_BASE;
+    state.shieldMax     = PLAYER_MAX_SHIELD_BASE;
+    state.shieldMaxBase = PLAYER_MAX_SHIELD_BASE;
+
+    state.power = { reactorOutput: REACTOR_BASE_OUTPUT, weapons: 2, shields: 2, drive: 2 };
+
+    state.inventory = {
+        collectedIds:     new Set(),
+        items:            [],
+        equippedWeaponId: 'blaster',
+    };
+    state.currentWeaponStats = null;
+    state.mantaEffects       = { speedMult: 1, damageMult: 1 };
+
+    state.unlockedCodes = new Set();
+    state.usedTerminals = new Set();
 }

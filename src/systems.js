@@ -8,13 +8,13 @@ import Phaser from 'phaser';
 import {
     TILE_SIZE, PLAYER_WEIGHT,
     NODE_CONNECT_DIST, WANDER_BACKTRACK_CHANCE,
-    PLAYER_MAX_ENERGY, INVINCIBILITY_MS,
-    ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT,
-    LIFT_HOLD_MS,
-    FOG_DARKNESS, FOG_DARKNESS_LIT, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE, LIGHT_BAND_ERASE_ALPHA,
+    INVINCIBILITY_MS,
+    LIFT_HOLD_MS, PIP_MAX,
+    FOG_DARKNESS, FOG_DARKNESS_LIT, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE,
+    LIGHT_BAND_ERASE_ALPHA, LIGHT_BAND_ERASE_ALPHA_LIT,
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
-    AIM_LASER_MAX_RANGE, PLAYER_SPRITE_RADIUS, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
+    AIM_LASER_MAX_RANGE, PLAYER_KNOCKBACK_SPEED, ENEMY_PUSH_MAX_SPEED,
     PLAYER_KNOCKBACK_MS, ENEMY_BOUNCE_SPEED, ENEMY_BOUNCE_COOLDOWN_MS, CONE_RAY_COUNT,
     CONE_BISECT_MAX_DEPTH, CONE_BISECT_MIN_ANGLE, CONE_BISECT_TOLERANCE_PX,
     LOS_CHECK_INTERVAL_MS,
@@ -23,6 +23,7 @@ import {
     DEBUG_LOGS
 } from './config.js';
 import { state } from './state.js';
+import { hasQuestItem } from './inventory.js';
 
 // ─────────────────────────────────────────────
 //  TILE HELPERS
@@ -56,6 +57,9 @@ export class BulletPool {
         this.textureKey  = opts.textureKey;
         this.defaultSpeed  = opts.defaultSpeed;
         this.defaultDamage = opts.defaultDamage;
+        // Optional render depth applied per-shot — bullets are created lazily by
+        // group.get(), so a one-time group.setDepth() would miss future bullets.
+        this.depth         = opts.depth;
 
         this.group = scene.physics.add.group({
             defaultKey: this.textureKey,
@@ -69,6 +73,7 @@ export class BulletPool {
 
         bullet.setActive(true);
         bullet.setVisible(true);
+        if (this.depth !== undefined) { bullet.setDepth(this.depth); }
         bullet.body.enable = true;
         bullet.body.reset(x, y);
         bullet.setData('damage', opts.damage ?? this.defaultDamage);
@@ -412,6 +417,44 @@ function segmentDistSq(px, py, x1, y1, x2, y2) {
 // instead of allocating a new array (same GC-avoidance idiom as fogEraseGfx).
 const coneNearSegments = [];
 
+// Enemies occlude light too. Each circular sprite is approximated by a
+// "billboard" chord: a segment through its centre, perpendicular to the
+// sight-line from the origin, spanning the sprite's silhouette. The chord's
+// orientation depends on where the light comes from, so the list must be
+// rebuilt per origin — callers build it and consume it in the same pass.
+const enemyOccluders    = [];
+const enemyOccluderPool = [];
+
+function buildEnemyOccluders(originX, originY) {
+    enemyOccluders.length = 0;
+    for (const enemy of state.enemies) {
+        const sprite = enemy.sprite;
+        if (!sprite || !sprite.active) { continue; }
+
+        const r    = sprite.displayWidth / 2;
+        const dx   = sprite.x - originX;
+        const dy   = sprite.y - originY;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= r) { continue; }   // origin inside the enemy — no meaningful chord
+
+        // Unit perpendicular to the sight-line.
+        const px = -dy / dist;
+        const py =  dx / dist;
+
+        let seg = enemyOccluderPool[enemyOccluders.length];
+        if (!seg) {
+            seg = { x1: 0, y1: 0, x2: 0, y2: 0 };
+            enemyOccluderPool[enemyOccluders.length] = seg;
+        }
+        seg.x1 = sprite.x - px * r;
+        seg.y1 = sprite.y - py * r;
+        seg.x2 = sprite.x + px * r;
+        seg.y2 = sprite.y + py * r;
+        enemyOccluders.push(seg);
+    }
+    return enemyOccluders;
+}
+
 // Casts the cone's rays and returns the sorted hit list. Callers can build a
 // polygon from this directly, or re-clamp the same hits to a shorter range via
 // clampConeHitsToRange() — the geometry only differs by the clamp, so multiple
@@ -438,6 +481,13 @@ export function computeConeHits(originX, originY, facing, halfAngle, range) {
     // segments are rebuilt each frame by updateDoors so a sliding slab
     // shortens its shadow as it opens.
     for (const seg of Doors.segments) {
+        if (segmentDistSq(originX, originY, seg.x1, seg.y1, seg.x2, seg.y2) <= RANGE_SQ) {
+            coneNearSegments.push(seg);
+        }
+    }
+    // Enemy bodies block the beam as well — the shadow edges come out of the
+    // same adaptive bisection that sharpens wall silhouettes.
+    for (const seg of buildEnemyOccluders(originX, originY)) {
         if (segmentDistSq(originX, originY, seg.x1, seg.y1, seg.x2, seg.y2) <= RANGE_SQ) {
             coneNearSegments.push(seg);
         }
@@ -579,7 +629,10 @@ export function updateFogOfWar() {
     // The headlight is always on; the deck's own lights decide how much it
     // matters. Powered deck → a subtle ambient dim the cone cuts through;
     // shut-down deck → near-black fog and the cone is your only vision.
-    const darkness = isDeckCleared() ? FOG_DARKNESS : FOG_DARKNESS_LIT;
+    const darkness   = isDeckCleared() ? FOG_DARKNESS : FOG_DARKNESS_LIT;
+    // On powered decks the beam barely registers — it's competing with the
+    // deck's own lights, so it only faintly brightens what it sweeps over.
+    const eraseAlpha = isDeckCleared() ? LIGHT_BAND_ERASE_ALPHA : LIGHT_BAND_ERASE_ALPHA_LIT;
 
     state.fogRT.setVisible(true);
     state.fogRT.clear();
@@ -611,7 +664,7 @@ export function updateFogOfWar() {
         if (poly.length < 3) { continue; }
 
         eraseGfx.clear();
-        eraseGfx.fillStyle(0xffffff, LIGHT_BAND_ERASE_ALPHA);
+        eraseGfx.fillStyle(0xffffff, eraseAlpha);
         eraseGfx.beginPath();
         eraseGfx.moveTo(poly[0].x, poly[0].y);
         for (let j = 1; j < poly.length; j++) {
@@ -1063,7 +1116,8 @@ export function parseDoors(map) {
         blocker.body.pushable = false;
 
         Doors.list.push({
-            horiz, locked, ax, ay, cx, cy, length, centerX, centerY,
+            horiz, locked, codeId: props.codeId || null,
+            ax, ay, cx, cy, length, centerX, centerY,
             img, texLen, texThick, cross0,
             openT:     0,      // 0 = closed, 1 = slid fully into the pocket
             prevOpenT: -1,     // forces the first pose sync
@@ -1074,6 +1128,25 @@ export function parseDoors(map) {
 
     debugLog('DOORS: Parsed ' + Doors.list.length + ' door(s) on ' + state.currentDeck + '.');
     updateDoors(0);   // sync bodies, segments and visuals to the closed state
+}
+
+// Unlocks any locked door whose codeId is satisfied — either the player
+// carries the matching quest key, or a terminal unlocked it remotely.
+// Called after parseDoors on deck load, and again whenever a key is picked
+// up or a terminal fires. Doors locked without a codeId stay locked forever.
+export function applyUnlockedDoors() {
+    let unlocked = 0;
+    for (const door of Doors.list) {
+        if (!door.locked || !door.codeId) { continue; }
+        if (!hasQuestItem(door.codeId) && !state.unlockedCodes.has(door.codeId)) { continue; }
+
+        door.locked = false;
+        Doors.solidGroup.remove(door.blocker);
+        door.img.clearTint();
+        if (isDeckCleared()) { door.img.setTint(DIM_COLOUR); }
+        unlocked++;
+    }
+    return unlocked;
 }
 
 // Locked doors never open, so waypoint links that cross them are dead ends —
@@ -1176,6 +1249,167 @@ function syncDoorPose(door, vis, open) {
         img.setCrop(0, cropOfs, door.texThick, cropLen);
         body.setSize(door.texThick, vis, true);
         body.reset(door.cross0 + door.texThick / 2, door.ay + vis / 2);
+    }
+}
+
+// ─────────────────────────────────────────────
+//  COMPUTER TERMINALS
+// ─────────────────────────────────────────────
+//  Interactive consoles from the map's "Terminals" object layer. Hold F
+//  on one (same gesture as lifts) to access it. A terminal may require a
+//  security-code quest item (codeId) and fires its effect once:
+//    effect: 'unlock_doors' — effectTarget lists door codeIds to unlock
+//    effect: 'lore'         — message shows a one-shot text readout
+export const Terminals = {
+    zones:        [],
+    playerOn:     null,
+    holdStart:    0,
+    deniedUntil:  0,
+    progressBg:   null,
+    progressFill: null,
+};
+
+export function parseTerminals(map) {
+    Terminals.zones     = [];
+    Terminals.playerOn  = null;
+    Terminals.holdStart = 0;
+
+    let objLayer = map.getObjectLayer('Terminals');
+    if (!objLayer) {
+        const raw = map.objects ? map.objects.find(l => l.name === 'Terminals') : null;
+        if (raw) { objLayer = raw; }
+    }
+    if (!objLayer) {
+        debugLog('TERMINALS: No "Terminals" object layer on this deck.');
+        return;
+    }
+
+    for (const obj of objLayer.objects) {
+        const props = {};
+        for (const p of (obj.properties || [])) { props[p.name] = p.value; }
+
+        const w  = obj.width  || TILE_SIZE;
+        const h  = obj.height || TILE_SIZE;
+        const cx = obj.x + w / 2;
+        const cy = obj.y + h / 2;
+        const id = state.currentDeck + ':term:' + obj.id;
+        const used = state.usedTerminals.has(id);
+
+        const zone = state.scene.add.zone(cx, cy, w, h);
+        state.scene.physics.add.existing(zone, true);
+
+        const tint = used ? 0x667788 : 0xffcc44;
+        const indicator = state.scene.add.graphics();
+        indicator.lineStyle(2, tint, 0.6);
+        indicator.strokeRect(obj.x, obj.y, w, h);
+        indicator.fillStyle(tint, 0.15);
+        indicator.fillRect(obj.x, obj.y, w, h);
+
+        state.scene.add.text(cx, obj.y - 8, 'TERMINAL', {
+            fontFamily: 'monospace', fontSize: '10px', resolution: 2,
+            fill: used ? '#667788' : '#ffcc44',
+        }).setOrigin(0.5, 1);
+
+        Terminals.zones.push({
+            zone, id, used, indicator,
+            x: cx, y: cy,
+            codeId:       props.codeId       || null,
+            effect:       props.effect       || 'lore',
+            effectTarget: props.effectTarget || '',
+            message:      props.message      || '',
+        });
+    }
+
+    Terminals.progressBg = state.scene.add.graphics();
+    Terminals.progressBg.setScrollFactor(0).setDepth(52).setVisible(false);
+    Terminals.progressFill = state.scene.add.graphics();
+    Terminals.progressFill.setScrollFactor(0).setDepth(53).setVisible(false);
+
+    debugLog('TERMINALS: Parsed ' + Terminals.zones.length + ' terminal(s) on ' + state.currentDeck + '.');
+}
+
+function findPlayerTerminalOverlap() {
+    const pb = state.player.getBounds();
+    for (const t of Terminals.zones) {
+        if (t.used) { continue; }
+        const zb = t.zone.getBounds();
+        if (Phaser.Geom.Intersects.RectangleToRectangle(pb, zb)) {
+            return t;
+        }
+    }
+    return null;
+}
+
+function hideTerminalProgress() {
+    Terminals.holdStart = 0;
+    Terminals.progressBg.setVisible(false);
+    Terminals.progressFill.setVisible(false);
+}
+
+export function updateTerminalHold(time, pad) {
+    if (Terminals.zones.length === 0) { return; }
+
+    let holdInput = false;
+    if (pad) {
+        holdInput = Math.abs(pad.rightStick.x) > INPUT_DEAD_ZONE ||
+                    Math.abs(pad.rightStick.y) > INPUT_DEAD_ZONE;
+    }
+    if (state.keys.f.isDown) { holdInput = true; }
+
+    if (time < Terminals.deniedUntil) { return; }
+
+    Terminals.playerOn = findPlayerTerminalOverlap();
+
+    if (!Terminals.playerOn || !holdInput) {
+        if (Terminals.holdStart !== 0) { hideTerminalProgress(); }
+        return;
+    }
+
+    if (Terminals.holdStart === 0) { Terminals.holdStart = time; }
+
+    const progress = Math.min((time - Terminals.holdStart) / LIFT_HOLD_MS, 1);
+
+    const barW = 80, barH = 7;
+    const barX = (state.scene.scale.width - barW) / 2;
+    const barY = state.scene.scale.height - 28;
+
+    Terminals.progressBg.setVisible(true);
+    Terminals.progressBg.clear();
+    Terminals.progressBg.fillStyle(0x443311, 0.8);
+    Terminals.progressBg.fillRect(barX, barY, barW, barH);
+
+    Terminals.progressFill.setVisible(true);
+    Terminals.progressFill.clear();
+    Terminals.progressFill.fillStyle(0xffcc44, 1);
+    Terminals.progressFill.fillRect(barX, barY, Math.round(barW * progress), barH);
+
+    if (progress >= 1) {
+        hideTerminalProgress();
+        activateTerminal(Terminals.playerOn, time);
+    }
+}
+
+function activateTerminal(t, time) {
+    if (t.codeId && !hasQuestItem(t.codeId)) {
+        showHudMessage('ACCESS DENIED — SECURITY CODE REQUIRED', '#ff2244');
+        Terminals.deniedUntil = time + 1500;
+        return;
+    }
+
+    t.used = true;
+    state.usedTerminals.add(t.id);
+    t.indicator.clear();
+    t.indicator.lineStyle(2, 0x667788, 0.6);
+    t.indicator.strokeRect(t.x - t.zone.width / 2, t.y - t.zone.height / 2, t.zone.width, t.zone.height);
+
+    if (t.effect === 'unlock_doors') {
+        for (const codeId of t.effectTarget.split(',').map(s => s.trim()).filter(Boolean)) {
+            state.unlockedCodes.add(codeId);
+        }
+        const n = applyUnlockedDoors();
+        showHudMessage(n > 0 ? 'REMOTE DOOR OVERRIDE ACCEPTED' : 'DOOR OVERRIDE STORED', '#ffcc00');
+    } else {
+        showHudMessage(t.message || 'DATA ACCESSED', '#ffcc00');
     }
 }
 
@@ -1289,69 +1523,186 @@ function triggerDeckShutdown() {
 }
 
 function showDeckClearedMessage() {
-    const msg = state.scene.add.text(
-        state.scene.scale.width / 2,
-        state.scene.scale.height / 2,
-        'DECK POWER DOWN', {
-            fontFamily: 'monospace', fontSize: '14px',
-            fill: '#44aaff', stroke: '#000000', strokeThickness: 2
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
-
-    state.scene.tweens.add({
-        targets:    msg,
-        alpha:      1,
-        duration:   500,
-        yoyo:       true,
-        hold:       1500,
-        onComplete: () => msg.destroy(),
-    });
+    showHudMessage('DECK POWER DOWN');
 }
 
 // ─────────────────────────────────────────────
 //  HUD
 // ─────────────────────────────────────────────
-export function createHUD(scene) {
-    const BAR_X = 12;
-    const BAR_Y = 12;
+//  Translucent band across the top of the screen: hull + shield bars on
+//  the left, equipped weapon (name + weapon-power pips) in the centre,
+//  W/S/D power-pip clusters and deck label on the right. Kill counter
+//  is a backed chip bottom-right, clear of the FPS counter.
+//  All text is >=11px at resolution 2 — smaller sizes rasterize into
+//  mush once the canvas is scaled up by DISPLAY_ZOOM.
 
-    scene.add.text(BAR_X, BAR_Y, 'ENERGY', {
-        fontFamily: 'monospace', fontSize: '6px', fill: '#aaffcc'
-    }).setScrollFactor(0).setDepth(50);
+const HUD_BAND_H = 44;
+const HUD_BAR_X  = 64;
+const HUD_BAR_W  = 140;
+const HUD_BAR_H  = 10;
+const HUD_DEPTH  = 50;
+
+const PIP_W = 7, PIP_H = 7, PIP_GAP = 3;
+const PIP_ROW_X = 392;   // x of the W/S/D pip rows (letters sit just left)
+
+export function hudText(scene, x, y, str, size, colour) {
+    return scene.add.text(x, y, str, {
+        fontFamily: 'monospace', fontSize: size + 'px', fill: colour,
+        resolution: 2,
+    }).setScrollFactor(0).setDepth(HUD_DEPTH + 1);
+}
+
+export function createHUD(scene) {
+    const W = scene.scale.width;
+
+    const band = scene.add.graphics();
+    band.fillStyle(0x000011, 0.55);
+    band.fillRect(0, 0, W, HUD_BAND_H);
+    band.setScrollFactor(0).setDepth(HUD_DEPTH);
+
+    // --- Left: hull + shield bars with numeric readouts ---
+    hudText(scene, 12, 6,  'HULL', 11, '#aaffcc');
+    hudText(scene, 12, 24, 'SHLD', 11, '#88ccff');
 
     const barBg = scene.add.graphics();
     barBg.fillStyle(0x222233, 1);
-    barBg.fillRect(BAR_X, BAR_Y + 12, ENERGY_BAR_WIDTH, ENERGY_BAR_HEIGHT);
-    barBg.setScrollFactor(0).setDepth(50);
+    barBg.fillRect(HUD_BAR_X, 6,  HUD_BAR_W, HUD_BAR_H);
+    barBg.fillRect(HUD_BAR_X, 24, HUD_BAR_W, HUD_BAR_H);
+    barBg.setScrollFactor(0).setDepth(HUD_DEPTH);
 
-    state.energyBarFill = scene.add.graphics();
-    state.energyBarFill.setScrollFactor(0).setDepth(51);
+    const hullFill   = scene.add.graphics().setScrollFactor(0).setDepth(HUD_DEPTH + 1);
+    const shieldFill = scene.add.graphics().setScrollFactor(0).setDepth(HUD_DEPTH + 1);
+    const hullNum    = hudText(scene, HUD_BAR_X + HUD_BAR_W + 8, 6,  '', 11, '#aaffcc');
+    const shieldNum  = hudText(scene, HUD_BAR_X + HUD_BAR_W + 8, 24, '', 11, '#88ccff');
 
-    state.killText = scene.add.text(BAR_X, BAR_Y + 24, 'Destroyed: 0', {
-        fontFamily: 'monospace', fontSize: '6px', fill: '#aaffcc'
-    });
-    state.killText.setScrollFactor(0).setDepth(50);
+    // --- Centre: equipped weapon name + weapon-power pips beneath it ---
+    const weaponText = hudText(scene, W / 2, 5, '', 12, '#ffee00').setOrigin(0.5, 0);
+    const weaponPips = scene.add.graphics().setScrollFactor(0).setDepth(HUD_DEPTH + 1);
 
-    const deckDef = deckDefinitions[state.currentDeck];
-    state.deckLabel = scene.add.text(scene.scale.width - 12, 12, deckDef ? deckDef.label : state.currentDeck, {
-        fontFamily: 'monospace', fontSize: '6px', fill: '#44aaff', align: 'right'
-    }).setOrigin(1, 0).setScrollFactor(0).setDepth(50);
+    // --- Right: W/S/D pip clusters, deck label at the far edge ---
+    hudText(scene, PIP_ROW_X - 12, 3,  'W', 11, '#ffaa33');
+    hudText(scene, PIP_ROW_X - 12, 17, 'S', 11, '#44ddff');
+    hudText(scene, PIP_ROW_X - 12, 31, 'D', 11, '#55ee77');
+    const powerPips = scene.add.graphics().setScrollFactor(0).setDepth(HUD_DEPTH + 1);
+
+    const deckDef   = deckDefinitions[state.currentDeck];
+    const deckLabel = hudText(scene, W - 12, 6,
+        deckDef ? deckDef.label : state.currentDeck, 12, '#44aaff').setOrigin(1, 0);
+
+    // --- Bottom-right: kill counter chip ---
+    const killText = scene.add.text(W - 8, scene.scale.height - 8, 'Destroyed: 0', {
+        fontFamily: 'monospace', fontSize: '11px', fill: '#aaffcc',
+        backgroundColor: '#000000aa', padding: { x: 4, y: 2 },
+        resolution: 2,
+    }).setOrigin(1, 1).setScrollFactor(0).setDepth(HUD_DEPTH + 1);
+
+    state.hud = {
+        band, barBg, hullFill, shieldFill, hullNum, shieldNum,
+        weaponText, weaponPips, powerPips, deckLabel, killText,
+        centerX: W / 2,
+    };
 
     updateHUD();
 }
 
-export function updateHUD() {
-    const pct = state.playerEnergy / PLAYER_MAX_ENERGY;
+function drawBar(gfx, y, value, max, colour) {
+    const pct = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+    gfx.clear();
+    gfx.fillStyle(colour, 1);
+    gfx.fillRect(HUD_BAR_X, y, Math.round(HUD_BAR_W * pct), HUD_BAR_H);
+}
 
+export function updateHullBar() {
+    const h = state.hud;
+    if (!h) { return; }
+    const pct = state.hullMax > 0 ? state.hull / state.hullMax : 0;
     let colour;
     if      (pct > 0.5) { colour = 0x00dd55; }
     else if (pct > 0.25){ colour = 0xffcc00; }
     else                { colour = 0xff2244; }
+    drawBar(h.hullFill, 6, state.hull, state.hullMax, colour);
+    h.hullNum.setText(Math.ceil(state.hull) + '/' + state.hullMax);
+}
 
-    state.energyBarFill.clear();
-    state.energyBarFill.fillStyle(colour, 1);
-    state.energyBarFill.fillRect(12, 24, Math.round(ENERGY_BAR_WIDTH * pct), ENERGY_BAR_HEIGHT);
+export function updateShieldBar() {
+    const h = state.hud;
+    if (!h) { return; }
+    const colour = state.shield > 0 ? 0x44aaff : 0x334455;
+    drawBar(h.shieldFill, 24, state.shield, state.shieldMax, colour);
+    h.shieldNum.setText(Math.round(state.shield) + '/' + state.shieldMax);
+}
 
-    state.killText.setText('Destroyed: ' + state.killCount);
+// One row of power pips: filled up to `count`, outlined up to `avail`.
+function drawPipRow(gfx, x, y, count, avail, colour) {
+    const slots = Math.min(PIP_MAX, Math.max(avail, count));
+    for (let i = 0; i < slots; i++) {
+        const px = x + i * (PIP_W + PIP_GAP);
+        if (i < count) {
+            gfx.fillStyle(colour, 1);
+            gfx.fillRect(px, y, PIP_W, PIP_H);
+        } else {
+            gfx.lineStyle(1, colour, 0.45);
+            gfx.strokeRect(px + 0.5, y + 0.5, PIP_W - 1, PIP_H - 1);
+        }
+    }
+}
+
+export function updateWeaponText() {
+    const h = state.hud;
+    if (!h) { return; }
+    const w = state.currentWeaponStats;
+    h.weaponText.setText(w ? w.label : 'Blaster');
+}
+
+export function updatePowerPips() {
+    const h = state.hud;
+    if (!h) { return; }
+    const out = state.power.reactorOutput;
+
+    h.powerPips.clear();
+    drawPipRow(h.powerPips, PIP_ROW_X, 5,  state.power.weapons, out, 0xffaa33);
+    drawPipRow(h.powerPips, PIP_ROW_X, 19, state.power.shields, out, 0x44ddff);
+    drawPipRow(h.powerPips, PIP_ROW_X, 33, state.power.drive,   out, 0x55ee77);
+
+    // Weapon-power pips centred under the weapon name.
+    h.weaponPips.clear();
+    const rowW = Math.min(PIP_MAX, out) * (PIP_W + PIP_GAP) - PIP_GAP;
+    drawPipRow(h.weaponPips, Math.round(h.centerX - rowW / 2), 24,
+        state.power.weapons, out, 0xffee00);
+}
+
+export function updateKillText() {
+    const h = state.hud;
+    if (!h) { return; }
+    h.killText.setText('Destroyed: ' + state.killCount);
+}
+
+export function updateHUD() {
+    updateHullBar();
+    updateShieldBar();
+    updateWeaponText();
+    updatePowerPips();
+    updateKillText();
+}
+
+// Brief centre-screen announcement (item pickups, terminal results, ...).
+export function showHudMessage(text, colour = '#44aaff') {
+    const msg = state.scene.add.text(
+        state.scene.scale.width / 2,
+        state.scene.scale.height / 2,
+        text, {
+            fontFamily: 'monospace', fontSize: '14px', resolution: 2,
+            fill: colour, stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(55).setAlpha(0);
+
+    state.scene.tweens.add({
+        targets:    msg,
+        alpha:      1,
+        duration:   400,
+        yoyo:       true,
+        hold:       1400,
+        onComplete: () => msg.destroy(),
+    });
 }
 
 // ─────────────────────────────────────────────
@@ -1383,7 +1734,13 @@ export function createFpsCounter(scene) {
 //  COMBAT — bullets and damage
 // ─────────────────────────────────────────────
 export function fireBullet(x, y, dx, dy) {
-    state.playerBullets.fire(x, y, dx, dy);
+    // Equipped-weapon stats (cooldown is applied by the caller's fire gate).
+    const w = state.currentWeaponStats;
+    state.playerBullets.fire(x, y, dx, dy, w ? {
+        textureKey: w.textureKey,
+        speed:      w.bulletSpeed,
+        damage:     w.damage,
+    } : {});
 }
 
 export function enemyShoot(enemy, time) {
@@ -1420,7 +1777,7 @@ export function bulletHitEnemy(bullet, enemySprite) {
         enemySprite.body.enable = false;
 
         state.killCount++;
-        updateHUD();
+        updateKillText();
 
         state.scene.time.delayedCall(100, () => {
             enemySprite.destroy();
@@ -1445,10 +1802,20 @@ export function playerHitByEnemyBullet(playerSprite, bullet) {
 export function applyDamageToPlayer(damage) {
     if (state.playerInvincible) { return; }
 
-    state.playerEnergy = Math.max(0, state.playerEnergy - damage);
-    updateHUD();
+    // Shield absorbs first; only the remainder chips the hull.
+    let remaining = damage;
+    if (state.shield > 0) {
+        const absorbed = Math.min(state.shield, remaining);
+        state.shield -= absorbed;
+        remaining    -= absorbed;
+    }
+    if (remaining > 0) {
+        state.hull = Math.max(0, state.hull - remaining);
+    }
+    updateHullBar();
+    updateShieldBar();
 
-    if (state.playerEnergy <= 0) {
+    if (state.hull <= 0) {
         triggerGameOver();
         return;
     }
@@ -1473,6 +1840,8 @@ export function triggerGameOver() {
     state.gameOver = true;
     state.player.setVelocity(0);
     state.player.setAlpha(0.3);
+    // postUpdateVisuals stops mirroring once gameOver is set, so fade the cap here.
+    if (state.playerTop) { state.playerTop.setAlpha(0.3); }
 
     for (const enemy of state.enemies) { enemy.sprite.setVelocity(0); }
 
@@ -1558,16 +1927,22 @@ export function drawAimLaser(rsOut, rsx, rsy) {
 
     const angle         = Math.atan2(rsy, rsx);
 
-    // Start at the player's circumference, not the centre.
-    const startX = state.player.x + Math.cos(angle) * PLAYER_SPRITE_RADIUS;
-    const startY = state.player.y + Math.sin(angle) * PLAYER_SPRITE_RADIUS;
+    // Start at the centre: the beam (depth 45) draws over the chassis but
+    // under the dome cap (46), so it visibly emerges from beneath the dome.
+    const startX = state.player.x;
+    const startY = state.player.y;
 
     // Find where the beam should end: AIM_LASER_MAX_RANGE, or sooner if a
-    // wall — or a closed door — blocks it.
+    // wall, a closed door, or an enemy blocks it.
     let hit = castRay(startX, startY, angle);
     if (Doors.segments.length > 0) {
         const doorHit = castRay(startX, startY, angle, Doors.segments);
         if (doorHit.dist < hit.dist) { hit = doorHit; }
+    }
+    const enemySegs = buildEnemyOccluders(startX, startY);
+    if (enemySegs.length > 0) {
+        const enemyHit = castRay(startX, startY, angle, enemySegs);
+        if (enemyHit.dist < hit.dist) { hit = enemyHit; }
     }
     const distToWall = Phaser.Math.Distance.Between(startX, startY, hit.x, hit.y);
     const drawLength = Math.min(AIM_LASER_MAX_RANGE, distToWall);

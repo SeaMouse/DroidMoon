@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { state } from './state.js';
 import {
     CAMERA_ZOOM,PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
-    PLAYER_MAX_ENERGY, INPUT_DEAD_ZONE,
+    INPUT_DEAD_ZONE,
     deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
 import {
@@ -11,9 +11,10 @@ import {
     buildNavGraph, extractWallSegments, extractWallCorners,
     parseLiftZones, updateLiftHold,
     Doors, resetDoors, parseDoors, updateDoors, pruneNavLinksBlockedByDoors,
+    applyUnlockedDoors, parseTerminals, updateTerminalHold,
     spawnEnemiesForDeck,
     applyDeckDim, checkDeckClearance,
-    createHUD, createFpsCounter,
+    createHUD, createFpsCounter, updateShieldBar, updateHUD, showHudMessage,
     fireBullet,
     bulletHitEnemy, playerHitByEnemyBullet,
     onPlayerEnemyCollide, onEnemyEnemyCollide,
@@ -23,6 +24,19 @@ import {
     drawAimLaser,
     debugLog
 } from './systems.js';
+import { playerWeaponTypes } from './items-config.js';
+import {
+    getDriveSpeedMultiplier, updateShieldRegen, applyPreset, recomputePowerDerived,
+} from './power.js';
+import { spawnItemsForDeck, onPlayerItemPickup, Items } from './inventory.js';
+
+// Quick power presets: keys 1-4 / D-pad left, up, right, down.
+const PRESET_KEYS = [
+    { key: 'one',   padButton: 14, preset: 'combat',   label: 'POWER: COMBAT'   },
+    { key: 'two',   padButton: 12, preset: 'balanced', label: 'POWER: BALANCED' },
+    { key: 'three', padButton: 15, preset: 'defense',  label: 'POWER: DEFENSE'  },
+    { key: 'four',  padButton: 13, preset: 'cruise',   label: 'POWER: CRUISE'   },
+];
 
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -33,6 +47,10 @@ export class GameScene extends Phaser.Scene {
         this.load.image('tiles', 'assets/poc_tiles.png');
         this.load.image('door_horiz', 'assets/door_horiz.png');
         this.load.image('door_vert', 'assets/door_vert.png');
+        // Player droid is two layers: the chassis (base) and the dome (top).
+        // Its emissions — torch cone, aim laser, bullets — draw between them.
+        this.load.image('droid_player_base', 'assets/droid_player_base.png');
+        this.load.image('droid_player_top', 'assets/droid_player_top.png');
 
         for (const [deckName, def] of Object.entries(deckDefinitions)) {
             this.load.tilemapTiledJSON(def.mapKey, def.mapFile);
@@ -43,8 +61,11 @@ export class GameScene extends Phaser.Scene {
         state.scene = this;
         state.wallLayer = null;   // cleared so a missing Obstacles layer is caught below
         state.gameOver = false;
-        state.playerEnergy    = (state.playerEnergy > 0) ? state.playerEnergy : PLAYER_MAX_ENERGY;
+        state.hull            = (state.hull > 0) ? state.hull : state.hullMax;
         state.playerFacing    = 0;
+        // Derive weapon stats / shield ceiling from current items + pips
+        // before anything (HUD, fire gate) reads them.
+        recomputePowerDerived();
         state.enemies         = [];
         state.playerInvincible = false;
         state.lastShotTime    = 0;
@@ -84,33 +105,45 @@ export class GameScene extends Phaser.Scene {
         extractWallSegments();
         extractWallCorners();
 
-        // --- Player texture ---
-        makeCircleTexture(this, 'player', 0x00ff99, 32);
-
         // --- Player spawn ---
         const spawnX = state.playerSpawnPos ? state.playerSpawnPos.x : deckDef.playerStart.x;
         const spawnY = state.playerSpawnPos ? state.playerSpawnPos.y : deckDef.playerStart.y;
         state.playerSpawnPos = null;
 
-        state.player = this.physics.add.sprite(spawnX, spawnY, 'player');
+        // The chassis is the physics body and sits below the emission layer
+        // (fog cone 40, aim laser 45, player bullets 42). The dome cap draws
+        // above all of them so the beam/laser/bullets read as coming out from
+        // under the top of the droid.
+        state.player = this.physics.add.sprite(spawnX, spawnY, 'droid_player_base');
+        state.player.setDepth(10);
         state.player.setCollideWorldBounds(true);
         this.physics.add.collider(state.player, state.wallLayer);
 
-        // --- Player bullet texture ---
-        if (!this.textures.exists('bullet')) {
-            const bulletGfx = this.add.graphics();
-            bulletGfx.fillStyle(0xffee00, 1);
-            bulletGfx.fillCircle(4, 4, 4);
-            bulletGfx.generateTexture('bullet', 8, 8);
-            bulletGfx.destroy();
+        // Origin (0,0) + integer offsets from the player centre (set every
+        // frame in postUpdateVisuals): the cap's edges then carry the same
+        // sub-pixel fraction as the 32×32 base, so roundPixels rounds both
+        // identically and the cap can't wiggle against the chassis. With the
+        // default centre origin the 20×19 texture puts an edge on a half-pixel,
+        // which rounds inconsistently as the lerped camera scroll drifts —
+        // the same bug the door art had.
+        state.playerTop = this.add.image(spawnX, spawnY, 'droid_player_top');
+        state.playerTop.setOrigin(0, 0);
+        state.playerTop.setDepth(46);
+
+        // --- Player bullet textures (one per equippable weapon) ---
+        for (const def of Object.values(playerWeaponTypes)) {
+            makeCircleTexture(this, def.textureKey, def.colour, 8);
         }
 
         // --- Player bullet pool ---
+        // Depth 42: above the fog (40) so shots read over the lit floor, below
+        // the dome cap (46) so they emerge from under the top of the droid.
         state.playerBullets = new BulletPool(this, {
             textureKey:    'bullet',
             defaultSpeed:  BULLET_SPEED,
                 defaultDamage: 1,
                     maxSize:       20,
+                    depth:         42,
         });
         this.physics.add.collider(state.playerBullets.group, state.wallLayer, (bullet) => {
             state.playerBullets.deactivate(bullet);
@@ -153,6 +186,9 @@ export class GameScene extends Phaser.Scene {
         // Parsed after the nav graph so waypoint links form through (closed)
         // doorways, and after player/enemies so the initial sync can run.
         parseDoors(map);
+        // Unlock code-doors the player already has keys/overrides for BEFORE
+        // pruning nav links, so enemies can still path through them.
+        applyUnlockedDoors();
         pruneNavLinksBlockedByDoors();
         if (Doors.blockGroup) {
             // Bullets always collide with door slabs...
@@ -171,6 +207,13 @@ export class GameScene extends Phaser.Scene {
         // --- Lift zones ---
         Lifts.zoneGroup = this.physics.add.staticGroup();
         parseLiftZones(map);
+
+        // --- Computer terminals ---
+        parseTerminals(map);
+
+        // --- Item pickups ---
+        spawnItemsForDeck(map, state.currentDeck);
+        this.physics.add.overlap(state.player, Items.group, onPlayerItemPickup);
 
         // --- Arrival snap ---
         if (state.lastDeck) {
@@ -258,7 +301,20 @@ export class GameScene extends Phaser.Scene {
             f2:    'F2',
             f3:    'F3',
             f4:    'F4',
+            i:     'I',
+            tab:   'TAB',
+            one:   'ONE',
+            two:   'TWO',
+            three: 'THREE',
+            four:  'FOUR',
         });
+        // Without a capture, TAB moves browser focus off the canvas.
+        this.input.keyboard.addCapture('TAB');
+
+        // Edge-detect state for pad buttons the update loop polls directly
+        // (button 8 = Select toggles the inventory; D-pad = power presets).
+        this.invTogglePrev = false;
+        this.padPresetPrev = {};
 
         // --- Debug overlays ---
         Debug.nav = this.add.graphics();
@@ -285,9 +341,34 @@ export class GameScene extends Phaser.Scene {
 
         const pad = this.input.gamepad.getPad(0);
 
+        // --- Inventory toggle (I / TAB / pad Select) ---
+        const invPadDown = !!(pad && pad.buttons[8] && pad.buttons[8].pressed);
+        const invPressed = Phaser.Input.Keyboard.JustDown(state.keys.i) ||
+                           Phaser.Input.Keyboard.JustDown(state.keys.tab) ||
+                           (invPadDown && !this.invTogglePrev);
+        this.invTogglePrev = invPadDown;
+        if (invPressed) {
+            this.scene.pause();
+            this.scene.launch('InventoryScene');
+            return;
+        }
+
+        // --- Quick power presets (1-4 / D-pad) ---
+        for (const p of PRESET_KEYS) {
+            const padDown = !!(pad && pad.buttons[p.padButton] && pad.buttons[p.padButton].pressed);
+            const pressed = Phaser.Input.Keyboard.JustDown(state.keys[p.key]) ||
+                            (padDown && !this.padPresetPrev[p.padButton]);
+            this.padPresetPrev[p.padButton] = padDown;
+            if (pressed && applyPreset(p.preset)) {
+                updateHUD();
+                showHudMessage(p.label, '#88ccff');
+            }
+        }
+
+        const moveSpeed = PLAYER_SPEED * getDriveSpeedMultiplier();
         if (pad) {
-            if (Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * PLAYER_SPEED); }
-            if (Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * PLAYER_SPEED); }
+            if (Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * moveSpeed); }
+            if (Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * moveSpeed); }
         }
 
         let rsx = 0, rsy = 0;
@@ -307,7 +388,8 @@ export class GameScene extends Phaser.Scene {
         const firePressed = state.keys.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].pressed);
 
-        if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + BULLET_COOLDOWN) {
+        const fireCooldown = state.currentWeaponStats ? state.currentWeaponStats.cooldown : BULLET_COOLDOWN;
+        if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + fireCooldown) {
             const aimX = Math.cos(state.playerFacing);
             const aimY = Math.sin(state.playerFacing);
             fireBullet(state.player.x, state.player.y, aimX, aimY);
@@ -319,6 +401,10 @@ export class GameScene extends Phaser.Scene {
         this.aimInput.y   = rsy;
 
         updateLiftHold(time, pad);
+        updateTerminalHold(time, pad);
+
+        // --- Shield regeneration (redraws only the shield bar) ---
+        if (updateShieldRegen(delta)) { updateShieldBar(); }
 
         // Before the enemy loop so their LOS checks see this frame's slabs.
         updateDoors(delta);
@@ -355,6 +441,15 @@ export class GameScene extends Phaser.Scene {
     // physics body by then, so these draw at the rendered position.
     postUpdateVisuals() {
         if (state.gameOver || !state.player) { return; }
+        // Keep the dome cap on the chassis, mirroring any alpha change (the
+        // invincibility flash and game-over fade tween state.player).
+        if (state.playerTop) {
+            state.playerTop.setPosition(
+                state.player.x - Math.floor(state.playerTop.width / 2),
+                state.player.y - Math.floor(state.playerTop.height / 2)
+            );
+            state.playerTop.setAlpha(state.player.alpha);
+        }
         drawAimLaser(this.aimInput.out, this.aimInput.x, this.aimInput.y);
         updateFogOfWar();
     }

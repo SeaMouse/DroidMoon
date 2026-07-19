@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { state, resetGameState } from '../state.js';
-import { PLAYER_MAX_ENERGY, INVINCIBILITY_MS } from '../config.js';
+import { INVINCIBILITY_MS } from '../config.js';
 import { Turret } from '../turret.js';
 import { BulletPool, createFpsCounter } from '../systems.js';
 import {
@@ -48,7 +48,7 @@ export class Level1Scene extends Phaser.Scene {
 
     create() {
         // --- Run state ---
-        state.playerEnergy    = PLAYER_MAX_ENERGY;   // explicit reset, in case we ever bypass TitleScene
+        state.hull             = state.hullMax;   // explicit reset, in case we ever bypass TitleScene
         state.gameOver         = false;
         state.playerInvincible = false;
 
@@ -397,6 +397,7 @@ export class Level1Scene extends Phaser.Scene {
             }
 
             // --- Momentum logic (skipped while flip tween runs) ---
+            const fx = state.mantaEffects;
             let worldVx;
 
         if (!this.shipFlipping) {
@@ -431,7 +432,7 @@ export class Level1Scene extends Phaser.Scene {
                 }
             }
 
-            worldVx = SHIP_SPEED_LEVELS[this.shipGear] * this.shipFacing;
+            worldVx = SHIP_SPEED_LEVELS[this.shipGear] * fx.speedMult * this.shipFacing;
         } else if (this.shipFlipPhase === 'yaw') {
             this.shipFlipProgress += delta / SHIP_FLIP_DURATION;
 
@@ -457,7 +458,7 @@ export class Level1Scene extends Phaser.Scene {
             }
 
             const flipMultiplier = 1 - 2 * this.shipFlipProgress;
-            worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing * flipMultiplier;
+            worldVx = SHIP_SPEED_LEVELS[0] * fx.speedMult * this.shipFacing * flipMultiplier;
         } else {
             this.shipFlipProgress += delta / SHIP_BARREL_ROLL_DURATION;
 
@@ -479,7 +480,7 @@ export class Level1Scene extends Phaser.Scene {
                 this.ship.setTexture('manta_flip_start', 0);   // settle on canonical idle pose
             }
 
-            worldVx = SHIP_SPEED_LEVELS[0] * this.shipFacing;
+            worldVx = SHIP_SPEED_LEVELS[0] * fx.speedMult * this.shipFacing;
         }
 
         // --- Landing zone check ---
@@ -501,7 +502,7 @@ export class Level1Scene extends Phaser.Scene {
         }
 
         // --- Camera lead based on current velocity ---
-        const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1];
+        const maxSpeed = SHIP_SPEED_LEVELS[SHIP_SPEED_LEVELS.length - 1] * fx.speedMult;
         const targetLead = -(worldVx / maxSpeed) * SHIP_CAMERA_LEAD_MAX;
         const LEAD_SMOOTH = 0.05;
         this.shipCameraLead = Phaser.Math.Linear(this.shipCameraLead, targetLead, LEAD_SMOOTH);
@@ -544,7 +545,7 @@ export class Level1Scene extends Phaser.Scene {
             let consumed = false;
             for (const t of this.turrets) {
                 if (t.containsPoint(bullet.x, bullet.y)) {
-                    t.hit(SHIP_BULLET_DAMAGE);
+                    t.hit(SHIP_BULLET_DAMAGE * fx.damageMult);
                     this.playerBullets.deactivate(bullet);
                     consumed = true;
                     break;
@@ -718,7 +719,7 @@ createShipHUD() {
 
 updateShipHUD() {
     if (!this.energyBarFill) { return; }
-    const pct = Math.max(0, state.playerEnergy / PLAYER_MAX_ENERGY);
+    const pct = Math.max(0, state.hull / state.hullMax);
 
     let colour;
     if      (pct > 0.5)  { colour = 0x00dd55; }
@@ -734,10 +735,10 @@ updateShipHUD() {
 applyDamageToShip(damage) {
     if (state.playerInvincible || state.gameOver) { return; }
 
-    state.playerEnergy = Math.max(0, state.playerEnergy - damage);
+    state.hull = Math.max(0, state.hull - damage);
     this.updateShipHUD();
 
-    if (state.playerEnergy <= 0) {
+    if (state.hull <= 0) {
         this.triggerShipGameOver();
         return;
     }

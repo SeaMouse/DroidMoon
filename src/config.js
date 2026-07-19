@@ -12,11 +12,27 @@ export const INPUT_DEAD_ZONE = 0.15;
 export const NODE_CONNECT_DIST       = 250;
 export const WANDER_BACKTRACK_CHANCE = 0.05;
 
-export const PLAYER_MAX_ENERGY = 100;
+export const PLAYER_MAX_HULL = 100;
 export const INVINCIBILITY_MS  = 1200;
 
-export const ENERGY_BAR_WIDTH  = 100;
-export const ENERGY_BAR_HEIGHT = 8;
+// ─────────────────────────────────────────────
+//  POWER SYSTEM — reactor pips and multipliers
+// ─────────────────────────────────────────────
+// The reactor's output is allocated as discrete "pips" across three
+// systems: weapons / shields / drive. Tables are indexed by pip count.
+// Index 2 is the 1.0 baseline — a fresh 6-pip reactor split 2/2/2
+// plays identically to the pre-power-system game.
+export const PIP_MAX             = 6;
+export const REACTOR_BASE_OUTPUT = 6;
+
+export const PLAYER_MAX_SHIELD_BASE = 50;
+export const SHIELD_REGEN_BASE      = 2;   // pts/sec at 0 shield pips
+export const SHIELD_REGEN_PER_PIP   = 3;   // extra pts/sec per shield pip
+
+export const WEAPON_DAMAGE_MULT   = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8];
+export const WEAPON_COOLDOWN_MULT = [1.6, 1.25, 1.0, 0.85, 0.72, 0.62, 0.55];
+export const SHIELD_MAX_MULT      = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8];
+export const DRIVE_SPEED_MULT     = [0.75, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4];
 
 export const LIFT_HOLD_MS = 2000;
 
@@ -25,7 +41,8 @@ export const FOG_DARKNESS_LIT       = 0.30; // deck still powered — headlight 
 export const FOG_COLOUR             = 0x000011;
 export const LIGHT_MAX_RANGE        = 550;
 export const CONE_HALF_ANGLE        = Math.PI / 5;
-export const LIGHT_BAND_ERASE_ALPHA = 0.35;
+export const LIGHT_BAND_ERASE_ALPHA     = 0.30; // beam strength on shut-down decks
+export const LIGHT_BAND_ERASE_ALPHA_LIT = 0.15; // powered decks — just a soft brightening
 
 export const DIM_COLOUR = 0x444466;
 
@@ -54,6 +71,12 @@ export const deckDefinitions = {
             { type: 'patrol_drone',   startTile: {x: 12, y: 8}  },
             { type: 'security_light', startTile: {x: 1,  y: 10} },
         ],
+        // Placed on waypoint tiles so they're always reachable.
+        items: [
+            { itemId: 'shield_capacitor_mk1', startTile: {x: 17, y: 8}  },
+            { itemId: 'armour_plate_mk1',     startTile: {x: 22, y: 16} },
+            { itemId: 'reactor_cell',         startTile: {x: 3,  y: 16} },
+        ],
     },
     deck2: {
         mapKey:      'ship_deck_2',
@@ -67,6 +90,11 @@ export const deckDefinitions = {
             { type: 'security_light',  startTile: {x: 14, y: 6}  },
             { type: 'security_heavy',  startTile: {x: 8,  y: 16} },
         ],
+        items: [
+            { itemId: 'keycode_bridge_01', startTile: {x: 27, y: 3}  },
+            { itemId: 'weapon_rapid_coil', startTile: {x: 13, y: 16} },
+            { itemId: 'reactor_core_mk2',  startTile: {x: 3,  y: 10} },
+        ],
     },
     deck3: {
         mapKey:      'ship_deck_3',
@@ -79,6 +107,13 @@ export const deckDefinitions = {
             { type: 'security_light',  startTile: {x: 16, y: 3}  },
             { type: 'security_heavy',  startTile: {x: 11, y: 15} },
             { type: 'security_heavy',  startTile: {x: 2,  y: 8}  },
+        ],
+        items: [
+            { itemId: 'securitycode_engineering', startTile: {x: 27, y: 10} },
+            { itemId: 'weapon_heavy_cannon',      startTile: {x: 17, y: 3}  },
+            { itemId: 'shield_capacitor_mk2',     startTile: {x: 7,  y: 16} },
+            { itemId: 'armour_plate_mk2',         startTile: {x: 22, y: 10} },
+            { itemId: 'manta_thruster_coil',      startTile: {x: 13, y: 16} },
         ],
     },
 };
