@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, DISPLAY_ZOOM } from './config.js';
 import { state } from './state.js';
+import { Items } from './inventory.js';
 import { TitleScene } from './scenes/title.js';
 import { GameScene } from './game-scene.js';
 import { EndScene } from './scenes/end.js';
@@ -35,4 +36,5 @@ const game = new Phaser.Game(config);
 if (import.meta.env.DEV) {
     window.__game  = game;
     window.__state = state;
+    window.__items = Items;
 }

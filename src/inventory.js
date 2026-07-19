@@ -3,19 +3,29 @@
 // ─────────────────────────────────────────────
 //  Item collection, derived-stat recomputation, weapon equipping and
 //  world pickups. Item placements come from the map's "Items" object
-//  layer when present, else from deckDefinitions[deck].items.
-//  Collected pickup ids live in state.inventory.collectedIds so an item
-//  never respawns when a deck is revisited.
+//  layer when present, else from deckDefinitions[deck].items; enemies
+//  can also drop salvage where they die.
+//
+//  Persistence has two halves. Collected pickup ids live in
+//  state.inventory.collectedIds so an item never respawns once taken;
+//  enemy drops — which exist nowhere in the map or config — are recorded
+//  in state.deckStates[deck].drops so they are still lying where they
+//  fell when the player comes back to that deck.
+//
+//  Pickups are only drawn while the player has line of sight to them,
+//  mirroring how enemies fade in and out in systems.js.
 // ─────────────────────────────────────────────
 import {
     TILE_SIZE, PLAYER_MAX_HULL, PLAYER_MAX_SHIELD_BASE, REACTOR_BASE_OUTPUT,
-    deckDefinitions,
+    ITEM_LOS_CHECK_INTERVAL_MS, ITEM_FADE_RATE,
+    ITEM_PULSE_MIN_ALPHA, ITEM_PULSE_PERIOD_MS,
+    deckDefinitions, enemyTypes,
 } from './config.js';
 import { state } from './state.js';
-import { itemTypes, playerWeaponTypes } from './items-config.js';
+import { itemTypes, playerWeaponTypes, enemyDropTable } from './items-config.js';
 import { recomputePowerDerived } from './power.js';
 import {
-    tileToPixel, applyUnlockedDoors, showHudMessage, updateHUD,
+    tileToPixel, applyUnlockedDoors, showHudMessage, updateHUD, hasLineOfSight,
 } from './systems.js';
 
 export const Items = {
@@ -125,6 +135,107 @@ function makeItemTexture(scene, category) {
     return key;
 }
 
+// One pickup in the world. Starts fully transparent: the LOS pass in
+// updateItemVisibility fades it in only once the player can see it.
+function createItemSprite(itemId, x, y, pickupId) {
+    const def = itemTypes[itemId];
+    if (!def) {
+        console.warn('ITEMS: unknown itemId "' + itemId + '" — skipping.');
+        return null;
+    }
+
+    const spr = Items.group.create(x, y, makeItemTexture(state.scene, def.category));
+    spr.setDepth(20);   // above the floor, below fog (40) — hidden until lit
+    spr.setAlpha(0);
+    spr.setData('itemId',   itemId);
+    spr.setData('pickupId', pickupId);
+
+    // Same idiom as Enemy: LOS is expensive, so it runs on a jittered timer
+    // rather than every frame, and the result drives a smooth alpha lerp.
+    spr.setData('losVisible',       false);
+    spr.setData('losAlpha',         0);
+    spr.setData('lastLosCheckTime', 0);
+    spr.setData('losCheckInterval', ITEM_LOS_CHECK_INTERVAL_MS + Math.random() * 80);
+    spr.setData('pulsePhase',       Math.random() * Math.PI * 2);
+    return spr;
+}
+
+// Fades every pickup toward visible-or-not based on line of sight, then
+// applies the idle pulse on top. Called once per frame from GameScene.
+export function updateItemVisibility(time) {
+    if (!Items.group) { return; }
+
+    const player = state.player;
+    if (!player) { return; }
+
+    const pulse = (phase) => {
+        const t = Math.sin(time / ITEM_PULSE_PERIOD_MS * Math.PI * 2 + phase) * 0.5 + 0.5;
+        return ITEM_PULSE_MIN_ALPHA + (1 - ITEM_PULSE_MIN_ALPHA) * t;
+    };
+
+    for (const spr of Items.group.getChildren()) {
+        if (!spr.active) { continue; }
+
+        if (time >= spr.getData('lastLosCheckTime') + spr.getData('losCheckInterval')) {
+            spr.setData('losVisible', hasLineOfSight(player.x, player.y, spr.x, spr.y));
+            spr.setData('lastLosCheckTime', time);
+        }
+
+        const target = spr.getData('losVisible') ? 1 : 0;
+        let losAlpha = spr.getData('losAlpha');
+        losAlpha += (target - losAlpha) * ITEM_FADE_RATE;
+        if (losAlpha < 0.01) { losAlpha = 0; }
+        spr.setData('losAlpha', losAlpha);
+
+        spr.setAlpha(losAlpha * pulse(spr.getData('pulsePhase')));
+    }
+}
+
+// ─────────────────────────────────────────────
+//  ENEMY DROPS
+// ─────────────────────────────────────────────
+// Drops are appended to the deck's record and never removed from it —
+// collectedIds is what decides whether one still exists. Keeping the array
+// append-only means a drop's index, and so its pickup id, stays stable
+// across visits.
+function getDeckDrops(deckName) {
+    if (!state.deckStates[deckName]) {
+        state.deckStates[deckName] = { drops: [] };
+    }
+    const deckState = state.deckStates[deckName];
+    if (!deckState.drops) { deckState.drops = []; }
+    return deckState.drops;
+}
+
+function rollDropItemId() {
+    const total = enemyDropTable.reduce((sum, e) => sum + e.weight, 0);
+    let roll = Math.random() * total;
+    for (const entry of enemyDropTable) {
+        roll -= entry.weight;
+        if (roll <= 0) { return entry.itemId; }
+    }
+    return enemyDropTable[enemyDropTable.length - 1].itemId;
+}
+
+// Rolls the dead enemy's drop chance and, on a hit, leaves salvage at the
+// wreck. Called from systems.bulletHitEnemy.
+export function maybeDropItem(x, y, enemyTypeName) {
+    const typeDef = enemyTypes[enemyTypeName];
+    if (!typeDef || !typeDef.dropChance) { return null; }
+    if (Math.random() >= typeDef.dropChance) { return null; }
+
+    const itemId   = rollDropItemId();
+    const deckName = state.currentDeck;
+    const drops    = getDeckDrops(deckName);
+    const pickupId = deckName + ':drop:' + drops.length;
+
+    drops.push({ itemId, x, y, pickupId });
+
+    const spr = createItemSprite(itemId, x, y, pickupId);
+    if (spr) { showHudMessage('SALVAGE DETECTED', '#aaffcc'); }
+    return spr;
+}
+
 export function spawnItemsForDeck(map, deckName) {
     Items.group = state.scene.physics.add.staticGroup();
 
@@ -159,24 +270,16 @@ export function spawnItemsForDeck(map, deckName) {
         });
     }
 
+    // Salvage dropped by enemies killed here on an earlier visit.
+    const drops = (state.deckStates[deckName] && state.deckStates[deckName].drops) || [];
+    for (const d of drops) {
+        candidates.push({ itemId: d.itemId, x: d.x, y: d.y, pickupId: d.pickupId });
+    }
+
     let placed = 0;
     for (const c of candidates) {
-        const def = itemTypes[c.itemId];
-        if (!def) {
-            console.warn('ITEMS: unknown itemId "' + c.itemId + '" — skipping.');
-            continue;
-        }
         if (state.inventory.collectedIds.has(c.pickupId)) { continue; }
-
-        const spr = Items.group.create(c.x, c.y, makeItemTexture(state.scene, def.category));
-        spr.setDepth(20);   // above the floor, below fog (40) — hidden until lit
-        spr.setData('itemId',   c.itemId);
-        spr.setData('pickupId', c.pickupId);
-
-        state.scene.tweens.add({
-            targets: spr, alpha: 0.55, duration: 700, yoyo: true, repeat: -1,
-        });
-        placed++;
+        if (createItemSprite(c.itemId, c.x, c.y, c.pickupId)) { placed++; }
     }
     return placed;
 }

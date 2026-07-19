@@ -89,6 +89,15 @@ export const itemTypes = {
     },
 };
 
+// Weighted table of salvage a destroyed enemy can leave behind. Deliberately
+// limited to the modest stat items — weapons and quest items stay hand-placed
+// so progression can't hinge on a dice roll.
+export const enemyDropTable = [
+    { itemId: 'reactor_cell',         weight: 3 },
+    { itemId: 'shield_capacitor_mk1', weight: 3 },
+    { itemId: 'armour_plate_mk1',     weight: 2 },
+];
+
 export const playerWeaponTypes = {
     blaster: {
         label:            'Blaster',

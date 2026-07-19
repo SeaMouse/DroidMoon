@@ -28,7 +28,9 @@ import { playerWeaponTypes } from './items-config.js';
 import {
     getDriveSpeedMultiplier, updateShieldRegen, applyPreset, recomputePowerDerived,
 } from './power.js';
-import { spawnItemsForDeck, onPlayerItemPickup, Items } from './inventory.js';
+import {
+    spawnItemsForDeck, onPlayerItemPickup, updateItemVisibility, Items,
+} from './inventory.js';
 
 // Quick power presets: keys 1-4 / D-pad left, up, right, down.
 const PRESET_KEYS = [
@@ -412,6 +414,9 @@ export class GameScene extends Phaser.Scene {
         for (const enemy of state.enemies) {
             enemy.update(time);
         }
+
+        // After updateDoors, for the same reason the enemy LOS checks are.
+        updateItemVisibility(time);
 
         if (Phaser.Input.Keyboard.JustDown(state.keys.f1)) {
             const visible = !Debug.nav.visible;

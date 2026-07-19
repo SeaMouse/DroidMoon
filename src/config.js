@@ -149,6 +149,7 @@ export const enemyTypes = {
         contactDamage: 5,
         weaponType:    null,
         weight:        2,
+        dropChance:    0.04,
     },
     patrol_drone: {
         label:         'Patrol Drone',
@@ -159,6 +160,7 @@ export const enemyTypes = {
         contactDamage: 10,
         weaponType:    null,
         weight:        3,
+        dropChance:    0.07,
     },
     security_light: {
         label:         'Security Droid (Light)',
@@ -169,6 +171,7 @@ export const enemyTypes = {
         contactDamage: 15,
         weaponType:    'blaster',
         weight:        5,
+        dropChance:    0.12,
     },
     security_heavy: {
         label:         'Security Droid (Heavy)',
@@ -179,6 +182,7 @@ export const enemyTypes = {
         contactDamage: 25,
         weaponType:    'heavy_blaster',
         weight:        8,
+        dropChance:    0.22,
     },
 };
 
@@ -204,6 +208,13 @@ export const CONE_BISECT_MIN_ANGLE     = 0.002; // rad — stop splitting below 
 export const CONE_BISECT_TOLERANCE_PX  = 2;     // deviation below this = chord matches the wall
 
 export const LOS_CHECK_INTERVAL_MS     = 120;  // ms between per-enemy line-of-sight checks
+
+// Pickups are hidden until the player can actually see them. They never move,
+// so their LOS can be sampled less often than the enemies'.
+export const ITEM_LOS_CHECK_INTERVAL_MS = 200;  // ms between per-item line-of-sight checks
+export const ITEM_FADE_RATE             = 0.10; // per-frame lerp toward the target alpha
+export const ITEM_PULSE_MIN_ALPHA       = 0.55; // dimmest point of the idle pulse
+export const ITEM_PULSE_PERIOD_MS       = 1400; // full bright→dim→bright cycle
 
 // ─────────────────────────────────────────────
 //  DOORS

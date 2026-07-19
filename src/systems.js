@@ -23,7 +23,7 @@ import {
     DEBUG_LOGS
 } from './config.js';
 import { state } from './state.js';
-import { hasQuestItem } from './inventory.js';
+import { hasQuestItem, maybeDropItem } from './inventory.js';
 
 // ─────────────────────────────────────────────
 //  TILE HELPERS
@@ -1419,10 +1419,14 @@ function activateTerminal(t, time) {
 export function saveDeckState(deckName) {
     const saved = state.enemies.map(e => e.serialise());
 
-    const wasCleared = state.deckStates[deckName] && state.deckStates[deckName].cleared;
+    const prev       = state.deckStates[deckName];
+    const wasCleared = prev && prev.cleared;
     state.deckStates[deckName] = {
         enemies: saved,
         cleared: wasCleared || false,
+        // Enemy drops exist nowhere else — carry them across the rebuild or
+        // the salvage vanishes the moment the player takes a lift.
+        drops:   (prev && prev.drops) || [],
     };
 
     debugLog('STATE: Saved ' + saved.length + ' enemy(s) for ' + deckName + '.');
@@ -1455,7 +1459,9 @@ function spawnFreshEnemies(enemyDefs) {
 }
 
 export function spawnEnemiesForDeck(deckName) {
-    if (state.deckStates[deckName]) {
+    // A deck record can exist without an enemy roster — a drop on a deck the
+    // player has not yet left creates one. Only a saved roster means "restore".
+    if (state.deckStates[deckName] && state.deckStates[deckName].enemies) {
         debugLog('STATE: Restoring saved enemies for ' + deckName + '.');
         restoreEnemiesFromState(state.deckStates[deckName]);
     } else {
@@ -1775,6 +1781,9 @@ export function bulletHitEnemy(bullet, enemySprite) {
         enemySprite.setActive(false);
         enemySprite.setVisible(false);
         enemySprite.body.enable = false;
+
+        // Salvage is left at the wreck before the sprite goes away.
+        maybeDropItem(enemySprite.x, enemySprite.y, enemy.typeName);
 
         state.killCount++;
         updateKillText();
