@@ -49,6 +49,12 @@ export const CONE_HALF_ANGLE        = Math.PI / 5;
 export const LIGHT_BAND_ERASE_ALPHA     = 0.30; // beam strength on shut-down decks
 export const LIGHT_BAND_ERASE_ALPHA_LIT = 0.15; // powered decks — just a soft brightening
 
+// A droid only throws a shadow in the headlight once it is drawn solidly
+// enough to explain one. Enemy sprites lerp their alpha towards line-of-sight
+// rather than snapping, so a bare `alpha > 0` test would leave a shadow
+// trailing behind a droid that has already faded out of sight.
+export const ENEMY_SHADOW_MIN_ALPHA = 0.25;
+
 export const DIM_COLOUR = 0x444466;
 
 export const DEBUG_LOGS = false;

@@ -13,6 +13,7 @@ import {
     TRANSFER_HOLD_MS, TRANSFER_REACH, TRANSFER_DENY_MS, HOST_EJECT_INVULN_MS,
     PLAYER_SPRITE_RADIUS, droidClasses,
     FOG_DARKNESS, FOG_DARKNESS_LIT, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE,
+    ENEMY_SHADOW_MIN_ALPHA,
     LIGHT_BAND_ERASE_ALPHA, LIGHT_BAND_ERASE_ALPHA_LIT,
     DIM_COLOUR,
     deckDefinitions, weaponTypes, enemyTypes,
@@ -425,14 +426,21 @@ const coneNearSegments = [];
 // sight-line from the origin, spanning the sprite's silhouette. The chord's
 // orientation depends on where the light comes from, so the list must be
 // rebuilt per origin — callers build it and consume it in the same pass.
+//
+// `visibleOnly` skips droids the player cannot see. A shadow with nothing
+// casting it is a free radar contact: it announces a droid the fog is
+// supposed to be hiding, and gives away its exact bearing. The aim laser
+// passes false — stopping short on a body you cannot see is a *shot*
+// landing, not a light source, and it should still connect.
 const enemyOccluders    = [];
 const enemyOccluderPool = [];
 
-function buildEnemyOccluders(originX, originY) {
+function buildEnemyOccluders(originX, originY, { visibleOnly = false } = {}) {
     enemyOccluders.length = 0;
     for (const enemy of state.enemies) {
         const sprite = enemy.sprite;
         if (!sprite || !sprite.active) { continue; }
+        if (visibleOnly && sprite.alpha < ENEMY_SHADOW_MIN_ALPHA) { continue; }
 
         const r    = sprite.displayWidth / 2;
         const dx   = sprite.x - originX;
@@ -489,8 +497,9 @@ export function computeConeHits(originX, originY, facing, halfAngle, range) {
         }
     }
     // Enemy bodies block the beam as well — the shadow edges come out of the
-    // same adaptive bisection that sharpens wall silhouettes.
-    for (const seg of buildEnemyOccluders(originX, originY)) {
+    // same adaptive bisection that sharpens wall silhouettes. Only droids the
+    // player can actually see cast one; an unseen droid stays unseen.
+    for (const seg of buildEnemyOccluders(originX, originY, { visibleOnly: true })) {
         if (segmentDistSq(originX, originY, seg.x1, seg.y1, seg.x2, seg.y2) <= RANGE_SQ) {
             coneNearSegments.push(seg);
         }
