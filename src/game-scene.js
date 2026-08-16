@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { state } from './state.js';
 import {
-    CAMERA_ZOOM,PLAYER_SPEED, BULLET_COOLDOWN, BULLET_SPEED,
+    CAMERA_ZOOM, BULLET_COOLDOWN, BULLET_SPEED,
     INPUT_DEAD_ZONE,
     deckDefinitions, weaponTypes, enemyTypes,
 } from './config.js';
@@ -22,14 +22,16 @@ import {
     drawDebugWallSegments, drawDebugRays, drawDebugVisibilityPolygon,
     drawDebugNavStatic, drawDebugNavDynamic,
     drawAimLaser,
+    resetTransfer, createTransferProgress, updateTransferHold,
+    applyHostVisuals, updateHostLabel,
     debugLog
 } from './systems.js';
-import { playerWeaponTypes } from './items-config.js';
 import {
-    getDriveSpeedMultiplier, updateShieldRegen, applyPreset, recomputePowerDerived,
+    getPlayerSpeed, updateShieldRegen, applyPreset,
 } from './power.js';
 import {
     spawnItemsForDeck, onPlayerItemPickup, updateItemVisibility, Items,
+    recomputeDerivedStats,
 } from './inventory.js';
 
 // Quick power presets: keys 1-4 / D-pad left, up, right, down.
@@ -63,11 +65,15 @@ export class GameScene extends Phaser.Scene {
         state.scene = this;
         state.wallLayer = null;   // cleared so a missing Obstacles layer is caught below
         state.gameOver = false;
-        state.hull            = (state.hull > 0) ? state.hull : state.hullMax;
         state.playerFacing    = 0;
-        // Derive weapon stats / shield ceiling from current items + pips
-        // before anything (HUD, fire gate) reads them.
-        recomputePowerDerived();
+        // Re-baseline hull/shield/reactor/weapon from the host chassis before
+        // anything (HUD, fire gate) reads them. Level1 borrows state.hull for
+        // the Manta, so coming back to a deck has to restate the droid's own
+        // ceiling rather than trust whatever was left there.
+        recomputeDerivedStats();
+        state.hull   = (state.hull > 0) ? Math.min(state.hull, state.hullMax) : state.hullMax;
+        state.shield = Math.min(state.shield, state.shieldMax);
+        resetTransfer();
         state.enemies         = [];
         state.playerInvincible = false;
         state.lastShotTime    = 0;
@@ -132,8 +138,8 @@ export class GameScene extends Phaser.Scene {
         state.playerTop.setOrigin(0, 0);
         state.playerTop.setDepth(46);
 
-        // --- Player bullet textures (one per equippable weapon) ---
-        for (const def of Object.values(playerWeaponTypes)) {
+        // --- Player bullet textures (one per gun a chassis might carry) ---
+        for (const def of Object.values(weaponTypes)) {
             makeCircleTexture(this, def.textureKey, def.colour, 8);
         }
 
@@ -254,6 +260,10 @@ export class GameScene extends Phaser.Scene {
         // light-like beam instead of stacking as opaque red paint.
         state.aimLaser.setBlendMode(Phaser.BlendModes.ADD);
 
+        // --- Host chassis appearance + transfer progress bar ---
+        applyHostVisuals(this);
+        createTransferProgress(this);
+
         // --- HUD ---
         createHUD(this);
         createFpsCounter(this);
@@ -304,6 +314,7 @@ export class GameScene extends Phaser.Scene {
             f3:    'F3',
             f4:    'F4',
             i:     'I',
+            t:     'T',
             tab:   'TAB',
             one:   'ONE',
             two:   'TWO',
@@ -367,7 +378,7 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        const moveSpeed = PLAYER_SPEED * getDriveSpeedMultiplier();
+        const moveSpeed = getPlayerSpeed();
         if (pad) {
             if (Math.abs(pad.leftStick.x) > INPUT_DEAD_ZONE) { state.player.setVelocityX(pad.leftStick.x * moveSpeed); }
             if (Math.abs(pad.leftStick.y) > INPUT_DEAD_ZONE) { state.player.setVelocityY(pad.leftStick.y * moveSpeed); }
@@ -390,8 +401,12 @@ export class GameScene extends Phaser.Scene {
         const firePressed = state.keys.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].pressed);
 
-        const fireCooldown = state.currentWeaponStats ? state.currentWeaponStats.cooldown : BULLET_COOLDOWN;
-        if (firePressed && (lsOut || rsOut) && time > state.lastShotTime + fireCooldown) {
+        // A chassis with no gun of its own falls back to the influence
+        // device's weak ID Pulse, so this gate normally passes; it stays as a
+        // guard in case a class ever ends up with no weapon at all.
+        const armed        = !!state.currentWeaponStats;
+        const fireCooldown = armed ? state.currentWeaponStats.cooldown : BULLET_COOLDOWN;
+        if (armed && firePressed && (lsOut || rsOut) && time > state.lastShotTime + fireCooldown) {
             const aimX = Math.cos(state.playerFacing);
             const aimY = Math.sin(state.playerFacing);
             fireBullet(state.player.x, state.player.y, aimX, aimY);
@@ -404,6 +419,7 @@ export class GameScene extends Phaser.Scene {
 
         updateLiftHold(time, pad);
         updateTerminalHold(time, pad);
+        updateTransferHold(time, pad);
 
         // --- Shield regeneration (redraws only the shield bar) ---
         if (updateShieldRegen(delta)) { updateShieldBar(); }
@@ -455,6 +471,7 @@ export class GameScene extends Phaser.Scene {
             );
             state.playerTop.setAlpha(state.player.alpha);
         }
+        updateHostLabel();
         drawAimLaser(this.aimInput.out, this.aimInput.x, this.aimInput.y);
         updateFogOfWar();
     }

@@ -13,6 +13,7 @@ import {
     SHIP_CAMERA_LEAD_MAX, SHIP_EDGE_ZONE,
     LASER_EMITTER_X_OFFSET, LASER_EMITTER_Y_OFFSET,
     SHIP_BULLET_COOLDOWN_MS, SHIP_BULLET_SPEED, SHIP_BULLET_DAMAGE, SHIP_BULLET_MAX_POOL,
+    MANTA_BASE_HULL,
     TURRET_BULLET_SPEED, TURRET_BULLET_DAMAGE, TURRET_BULLET_MAX_POOL,
     INPUT_DEAD_ZONE
 } from '../config.js';
@@ -48,7 +49,11 @@ export class Level1Scene extends Phaser.Scene {
 
     create() {
         // --- Run state ---
-        state.hull             = state.hullMax;   // explicit reset, in case we ever bypass TitleScene
+        // state.hull/hullMax is "the current vehicle's health": on the decks
+        // it is the host droid's, up here it is the Manta's. Every scrap of
+        // salvage carried off the ship is spent right here.
+        state.hullMax          = MANTA_BASE_HULL + (state.mantaEffects.hullBonus || 0);
+        state.hull             = state.hullMax;
         state.gameOver         = false;
         state.playerInvincible = false;
 
@@ -513,7 +518,8 @@ export class Level1Scene extends Phaser.Scene {
             this.cursors.space.isDown ||
             (pad && pad.buttons[7] && pad.buttons[7].value > 0.5)
         );
-        if (firing && time - this.lastShotTime >= SHIP_BULLET_COOLDOWN_MS) {
+        const shipCooldown = SHIP_BULLET_COOLDOWN_MS * (state.mantaEffects.fireRateMult || 1);
+        if (firing && time - this.lastShotTime >= shipCooldown) {
             this.lastShotTime = time;
             const sx = this.ship.x + LASER_EMITTER_X_OFFSET * SHIP_SCALE * this.shipFacing;
 

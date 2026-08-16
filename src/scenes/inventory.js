@@ -2,19 +2,22 @@
 //  INVENTORY SCENE
 // ─────────────────────────────────────────────
 //  Pause overlay launched over a paused GameScene (mirrors the
-//  DeckSelectScene pattern). Five tabs: WEAPONS, DEFENCE, POWER,
-//  QUEST, MANTA. Content is rebuilt from scratch on every change —
-//  simplest approach given the small row counts involved.
+//  DeckSelectScene pattern). Four tabs: HOST, POWER, CARGO, QUEST.
+//  Content is rebuilt from scratch on every change — simplest approach
+//  given the small row counts involved.
+//
+//  There is no equip flow any more: a droid's gun, hull, shields and
+//  reactor come with the chassis, and the chassis is taken by transfer.
+//  The only fittable pickup is armour plating, and it fits itself.
 // ─────────────────────────────────────────────
 import Phaser from 'phaser';
 import { state } from '../state.js';
-import { PIP_MAX } from '../config.js';
-import { itemTypes, playerWeaponTypes } from '../items-config.js';
-import { adjustPip } from '../power.js';
-import { equipWeapon, playerHasWeapon } from '../inventory.js';
+import { PIP_MAX, weaponTypes, DEVICE_WEAPON } from '../config.js';
+import { itemTypes } from '../items-config.js';
+import { adjustPip, getHostClass } from '../power.js';
 import { updateHUD } from '../systems.js';
 
-const TABS = ['WEAPONS', 'DEFENCE', 'POWER', 'QUEST', 'MANTA'];
+const TABS = ['HOST', 'POWER', 'CARGO', 'QUEST'];
 
 const POWER_SYSTEMS = ['weapons', 'shields', 'drive'];
 const POWER_COLOURS = { weapons: '#ffaa33', shields: '#44ddff', drive: '#55ee77' };
@@ -39,8 +42,7 @@ export class InventoryScene extends Phaser.Scene {
         this.dpadPrevY = 0;
         this.dpadPrevX = 0;
 
-        // Edge-detection flags for buttons (A / B / L-shoulder / R-shoulder / Select).
-        this.padPrevBtn0 = false;
+        // Edge-detection flags for buttons (B / L-shoulder / R-shoulder / Select).
         this.padPrevBtn1 = false;
         this.padPrevBtn4 = false;
         this.padPrevBtn5 = false;
@@ -62,7 +64,7 @@ export class InventoryScene extends Phaser.Scene {
         }).setOrigin(0.5).setScrollFactor(0);
 
         this.add.text(cx, 470,
-            'Q/E: tabs   Up/Down: select   Left/Right: power pips   Enter/A: equip   I/Esc/B: close', {
+            'Q/E: tabs   Up/Down: select   Left/Right: power pips   I/Esc/B: close', {
                 fontFamily: FONT, fontSize: '11px', fill: DIM_COLOUR, resolution: RES,
             }).setOrigin(0.5).setScrollFactor(0);
 
@@ -84,44 +86,51 @@ export class InventoryScene extends Phaser.Scene {
     //  ROW DATA
     // ─────────────────────────────────────────
     buildRowsForTab(tab) {
-        if (tab === 'WEAPONS') {
-            const rows = [];
-            for (const id in playerWeaponTypes) {
-                if (!playerHasWeapon(id)) { continue; }
-                const def   = playerWeaponTypes[id];
-                const gated = (def.minReactorOutput || 0) > state.power.reactorOutput;
+        if (tab === 'HOST') {
+            const host = getHostClass();
+            // An unarmed chassis falls back to the influence device's own gun,
+            // so there is always an armament to report — just a feeble one.
+            const gun     = weaponTypes[host.weaponType || DEVICE_WEAPON];
+            const ownGun  = !!host.weaponType;
 
-                let label = def.label + '   DMG x' + def.damage + '  RATE ' + def.cooldown + 'ms';
-                if (gated) { label += '  [NEEDS REACTOR ' + def.minReactorOutput + ']'; }
-                if (id === state.inventory.equippedWeaponId) { label += '  [EQUIPPED]'; }
+            const rows = [{
+                label:  host.classNo + '  ' + host.label,
+                colour: '#88ffcc', forceWhiteOnSelect: false,
+            }, {
+                label:  'HULL      ' + host.hullMax +
+                        (state.armourBonus ? '  +' + state.armourBonus + ' armour' : ''),
+                colour: ROW_COLOUR, forceWhiteOnSelect: false,
+            }, {
+                label:  'SHIELD    ' + host.shieldMax + '   regen ' + host.shieldRegen + '/s',
+                colour: ROW_COLOUR, forceWhiteOnSelect: false,
+            }, {
+                label:  'REACTOR   ' + host.reactorOutput + ' pips',
+                colour: ROW_COLOUR, forceWhiteOnSelect: false,
+            }, {
+                label:  'DRIVE     ' + host.speed + '   mass ' + host.weight,
+                colour: ROW_COLOUR, forceWhiteOnSelect: false,
+            }, {
+                label:  'ARMAMENT  ' + gun.label + '   DMG ' + gun.damage +
+                        '  RATE ' + gun.cooldown + 'ms' +
+                        (ownGun ? '' : '   (device gun — chassis is unarmed)'),
+                colour: ownGun ? '#ffee00' : '#886666', forceWhiteOnSelect: false,
+            }];
 
-                let colour = ROW_COLOUR;
-                let forceWhiteOnSelect = true;
-                if (gated) { colour = '#555566'; forceWhiteOnSelect = false; }
-                else if (id === state.inventory.equippedWeaponId) { colour = '#ffee00'; forceWhiteOnSelect = false; }
-
-                rows.push({ label, colour, forceWhiteOnSelect, weaponId: id });
-            }
-            if (rows.length === 0) {
-                rows.push({ label: 'No weapons available.', colour: DIM_COLOUR, forceWhiteOnSelect: false });
-            }
-            return { rows, footer: null };
-        }
-
-        if (tab === 'DEFENCE') {
-            const rows = [];
-            for (const entry of state.inventory.items) {
+            // Armour is the one thing the influence device carries between
+            // hosts, so it is listed with the chassis rather than as cargo.
+            const plating = state.inventory.items.filter((entry) => {
                 const def = itemTypes[entry.itemId];
-                if (!def || (def.category !== 'shield' && def.category !== 'armour')) { continue; }
+                return def && def.scope === 'droid';
+            });
+            for (const entry of plating) {
+                const def = itemTypes[entry.itemId];
                 rows.push({
-                    label:  def.name + ' x' + entry.count + '   ' + def.description,
-                    colour: ROW_COLOUR, forceWhiteOnSelect: true,
+                    label:  'FITTED    ' + def.name + ' x' + entry.count,
+                    colour: '#99aabb', forceWhiteOnSelect: false,
                 });
             }
-            if (rows.length === 0) {
-                rows.push({ label: 'No defensive modules fitted.', colour: DIM_COLOUR, forceWhiteOnSelect: false });
-            }
-            return { rows, footer: null };
+
+            return { rows, footer: 'Hold T against a droid to attempt a transfer.' };
         }
 
         if (tab === 'POWER') {
@@ -155,21 +164,26 @@ export class InventoryScene extends Phaser.Scene {
             return { rows, footer: null };
         }
 
-        // MANTA
+        // CARGO — salvage bound for the Manta. Inert while on the decks.
         const rows = [];
         for (const entry of state.inventory.items) {
             const def = itemTypes[entry.itemId];
-            if (!def || !def.mantaCompatible) { continue; }
-            const fx = def.mantaEffects || {};
+            if (!def || def.scope !== 'manta') { continue; }
             rows.push({
-                label:  def.name + '   speed x' + (fx.speedMult ?? 1) + ' dmg x' + (fx.damageMult ?? 1),
+                label:  def.name + ' x' + entry.count + '   ' + def.description,
                 colour: ROW_COLOUR, forceWhiteOnSelect: true,
             });
         }
         if (rows.length === 0) {
-            rows.push({ label: 'No Manta-compatible equipment.', colour: DIM_COLOUR, forceWhiteOnSelect: false });
+            rows.push({ label: 'Hold empty.', colour: DIM_COLOUR, forceWhiteOnSelect: false });
         }
-        return { rows, footer: 'Fitted to the Manta for surface runs.' };
+
+        const fx = state.mantaEffects;
+        const footer = 'MANTA: speed x' + fx.speedMult.toFixed(2) +
+            '   damage x' + fx.damageMult.toFixed(2) +
+            '   rate x' + (1 / fx.fireRateMult).toFixed(2) +
+            '   integrity +' + fx.hullBonus;
+        return { rows, footer };
     }
 
     // ─────────────────────────────────────────
@@ -280,16 +294,6 @@ export class InventoryScene extends Phaser.Scene {
         }
     }
 
-    handleConfirm() {
-        if (TABS[this.tabIndex] !== 'WEAPONS') { return; }
-        const row = this.currentRows && this.currentRows[this.rowIndex];
-        if (!row || !row.weaponId) { return; }
-        if (equipWeapon(row.weaponId)) {
-            updateHUD();
-            this.redraw();
-        }
-    }
-
     close() {
         this.scene.stop();
         this.scene.resume('GameScene');
@@ -335,14 +339,6 @@ export class InventoryScene extends Phaser.Scene {
             if (x < -T && this.dpadPrevX >= -T) { this.handleLeft(); }
             if (x > T && this.dpadPrevX <= T) { this.handleRight(); }
             this.dpadPrevX = x;
-        }
-
-        // --- Confirm / equip ---
-        if (Phaser.Input.Keyboard.JustDown(this.menuKeys.enter)) { this.handleConfirm(); }
-        if (pad) {
-            const a = !!(pad.buttons[0] && pad.buttons[0].pressed);
-            if (a && !this.padPrevBtn0) { this.handleConfirm(); }
-            this.padPrevBtn0 = a;
         }
 
         // --- Close ---

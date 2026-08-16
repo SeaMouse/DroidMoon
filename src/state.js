@@ -9,9 +9,9 @@
 //  but that's a bigger refactor. For now: shared module state.
 // ─────────────────────────────────────────────
 
-import {
-    PLAYER_MAX_HULL, PLAYER_MAX_SHIELD_BASE, REACTOR_BASE_OUTPUT,
-} from './config.js';
+import { droidClasses, PLAYER_DROID_START } from './config.js';
+
+const START = droidClasses[PLAYER_DROID_START];
 
 export const state = {
     // --- Scene singletons (assigned in create) ---
@@ -34,29 +34,40 @@ export const state = {
     lastShotTime:     0,
     killCount:        0,
 
+    // --- Host chassis ---
+    // Which droid class the influence device is currently wearing. Every
+    // hull/shield/reactor/speed/weapon figure below derives from this, so a
+    // successful transfer is just a reassignment plus a recompute. It lives
+    // in the permanent half of state: saveDeckState never touches player
+    // fields, so identity survives a lift and the scene restart it causes.
+    playerDroidType: PLAYER_DROID_START,
+    transferCount:   0,
+
     // --- Hull & shield ---
     // Hull is the old "energy" bar: no regen, death at 0. Shield is a
-    // regenerating buffer that absorbs damage first; its ceiling and
-    // regen rate depend on items and shield pips (see power.js).
-    hull:          PLAYER_MAX_HULL,
-    hullMax:       PLAYER_MAX_HULL,
-    shield:        PLAYER_MAX_SHIELD_BASE,
-    shieldMax:     PLAYER_MAX_SHIELD_BASE,
-    shieldMaxBase: PLAYER_MAX_SHIELD_BASE,  // before pip multiplier (base + item bonuses)
+    // regenerating buffer that absorbs damage first; its ceiling and regen
+    // rate come from the host chassis and the shield pips (see power.js).
+    hull:          START.hullMax,
+    hullMax:       START.hullMax,
+    shield:        START.shieldMax,
+    shieldMax:     START.shieldMax,
+    shieldMaxBase: START.shieldMax,  // before pip multiplier (host + armour plating)
 
     // --- Power distribution (reactor pips) ---
-    power: { reactorOutput: REACTOR_BASE_OUTPUT, weapons: 2, shields: 2, drive: 2 },
+    power: { reactorOutput: START.reactorOutput, weapons: 2, shields: 1, drive: 1 },
 
     // --- Inventory ---
     inventory: {
-        collectedIds:     new Set(),  // pickup ids ('deck1:cfg:0') — never respawn
-        items:            [],         // [{ itemId, count }]
-        equippedWeaponId: 'blaster',
+        collectedIds: new Set(),  // pickup ids ('deck1:cfg:0') — never respawn
+        items:        [],         // [{ itemId, count }]
     },
     currentWeaponStats: null,  // derived cache — see power.recomputePowerDerived()
 
-    // --- Manta ship effects (from mantaCompatible items) ---
-    mantaEffects: { speedMult: 1, damageMult: 1 },
+    // --- Armour plating carried by the influence device between hosts ---
+    armourBonus: 0,
+
+    // --- Manta ship effects (from 'manta'-scope cargo) ---
+    mantaEffects: { speedMult: 1, damageMult: 1, fireRateMult: 1, hullBonus: 0 },
 
     // --- HUD references ---
     hud: null,   // bag of HUD game objects, owned by systems.createHUD
@@ -89,21 +100,24 @@ export function resetGameState() {
     state.gameOver         = false;
     state.playerInvincible = false;
 
-    state.hull          = PLAYER_MAX_HULL;
-    state.hullMax       = PLAYER_MAX_HULL;
-    state.shield        = PLAYER_MAX_SHIELD_BASE;
-    state.shieldMax     = PLAYER_MAX_SHIELD_BASE;
-    state.shieldMaxBase = PLAYER_MAX_SHIELD_BASE;
+    state.playerDroidType = PLAYER_DROID_START;
+    state.transferCount   = 0;
 
-    state.power = { reactorOutput: REACTOR_BASE_OUTPUT, weapons: 2, shields: 2, drive: 2 };
+    state.hull          = START.hullMax;
+    state.hullMax       = START.hullMax;
+    state.shield        = START.shieldMax;
+    state.shieldMax     = START.shieldMax;
+    state.shieldMaxBase = START.shieldMax;
+
+    state.power = { reactorOutput: START.reactorOutput, weapons: 2, shields: 1, drive: 1 };
 
     state.inventory = {
-        collectedIds:     new Set(),
-        items:            [],
-        equippedWeaponId: 'blaster',
+        collectedIds: new Set(),
+        items:        [],
     };
     state.currentWeaponStats = null;
-    state.mantaEffects       = { speedMult: 1, damageMult: 1 };
+    state.armourBonus        = 0;
+    state.mantaEffects       = { speedMult: 1, damageMult: 1, fireRateMult: 1, hullBonus: 0 };
 
     state.unlockedCodes = new Set();
     state.usedTerminals = new Set();

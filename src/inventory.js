@@ -16,14 +16,14 @@
 //  mirroring how enemies fade in and out in systems.js.
 // ─────────────────────────────────────────────
 import {
-    TILE_SIZE, PLAYER_MAX_HULL, PLAYER_MAX_SHIELD_BASE, REACTOR_BASE_OUTPUT,
+    TILE_SIZE,
     ITEM_LOS_CHECK_INTERVAL_MS, ITEM_FADE_RATE,
     ITEM_PULSE_MIN_ALPHA, ITEM_PULSE_PERIOD_MS,
     deckDefinitions, enemyTypes,
 } from './config.js';
 import { state } from './state.js';
-import { itemTypes, playerWeaponTypes, enemyDropTable } from './items-config.js';
-import { recomputePowerDerived } from './power.js';
+import { itemTypes, enemyDropTable } from './items-config.js';
+import { recomputePowerDerived, getHostClass, rescalePipsToReactor } from './power.js';
 import {
     tileToPixel, applyUnlockedDoors, showHudMessage, updateHUD, hasLineOfSight,
 } from './systems.js';
@@ -51,12 +51,12 @@ export function hasQuestItem(codeId) {
     });
 }
 
-// The default blaster is built in; other weapons must be found first.
-export function playerHasWeapon(weaponId) {
-    if (weaponId === 'blaster') { return true; }
-    return state.inventory.items.some(entry => {
+// Items held for a given scope — 'droid' (fitted to the host chassis) or
+// 'manta' (cargo bound for the ship).
+export function itemsInScope(scope) {
+    return state.inventory.items.filter(entry => {
         const def = itemTypes[entry.itemId];
-        return def && def.weaponId === weaponId;
+        return def && def.scope === scope;
     });
 }
 
@@ -69,52 +69,70 @@ export function addItemToInventory(itemId) {
     else          { state.inventory.items.push({ itemId, count: 1 }); }
 }
 
-// Rebuilds every stat that derives from held items, then lets power.js
-// re-derive the pip-dependent values on top.
+// Rebuilds every stat that derives from the host chassis plus held items,
+// then lets power.js re-derive the pip-dependent values on top.
+//
+// Hull, shields, reactor and gun all belong to the chassis. The only thing
+// the influence device brings with it is armour plating, which it unbolts
+// and re-welds onto each new host.
 export function recomputeDerivedStats() {
-    let hullBonus = 0, shieldBonus = 0, reactorBonus = 0;
-    const manta = { speedMult: 1, damageMult: 1 };
+    const host = getHostClass();
+
+    let armourBonus = 0;
+    const manta = { speedMult: 1, damageMult: 1, fireRateMult: 1, hullBonus: 0 };
 
     for (const entry of state.inventory.items) {
         const def = itemTypes[entry.itemId];
         if (!def) { continue; }
-        const fx = def.effects || {};
-        hullBonus    += (fx.hullMaxBonus       || 0) * entry.count;
-        shieldBonus  += (fx.shieldMaxBonus     || 0) * entry.count;
-        reactorBonus += (fx.reactorOutputBonus || 0) * entry.count;
 
-        if (def.mantaCompatible && def.mantaEffects) {
+        if (def.scope === 'droid') {
+            const fx = def.effects || {};
+            armourBonus += (fx.hullMaxBonus || 0) * entry.count;
+        } else if (def.scope === 'manta' && def.mantaEffects) {
+            const fx = def.mantaEffects;
+            // Multipliers stack per unit; flat bonuses simply add.
             for (let i = 0; i < entry.count; i++) {
-                manta.speedMult  *= def.mantaEffects.speedMult  || 1;
-                manta.damageMult *= def.mantaEffects.damageMult || 1;
+                manta.speedMult    *= fx.speedMult    || 1;
+                manta.damageMult   *= fx.damageMult   || 1;
+                manta.fireRateMult *= fx.fireRateMult || 1;
             }
+            manta.hullBonus += (fx.hullBonus || 0) * entry.count;
         }
     }
 
     // New armour plating arrives intact — grow current hull with the max.
     const prevHullMax = state.hullMax;
-    state.hullMax = PLAYER_MAX_HULL + hullBonus;
+    state.hullMax = host.hullMax + armourBonus;
     if (state.hullMax > prevHullMax) {
         state.hull += state.hullMax - prevHullMax;
     }
     state.hull = Math.min(state.hull, state.hullMax);
 
-    state.shieldMaxBase       = PLAYER_MAX_SHIELD_BASE + shieldBonus;
-    state.power.reactorOutput = REACTOR_BASE_OUTPUT + reactorBonus;
+    state.armourBonus         = armourBonus;
+    state.shieldMaxBase       = host.shieldMax;
+    state.power.reactorOutput = host.reactorOutput;
     state.mantaEffects        = manta;
 
     recomputePowerDerived();
 }
 
-export function equipWeapon(weaponId) {
-    const def = playerWeaponTypes[weaponId];
-    if (!def) { return false; }
-    if (!playerHasWeapon(weaponId)) { return false; }
-    if ((def.minReactorOutput || 0) > state.power.reactorOutput) { return false; }
+// Moves the influence device into a chassis. `refill` is the transfer case:
+// a fresh host arrives at its own full hull and shields, which is what makes
+// hopping the survival loop rather than just a stat change.
+export function applyHostChassis(droidType, { refill = true } = {}) {
+    state.playerDroidType = droidType;
 
-    state.inventory.equippedWeaponId = weaponId;
+    // Order matters: recomputeDerivedStats publishes the new reactor size,
+    // rescalePipsToReactor fits the player's existing split to it, and only
+    // then can the pip-dependent weapon/shield figures be derived.
+    recomputeDerivedStats();
+    rescalePipsToReactor();
     recomputePowerDerived();
-    return true;
+
+    if (refill) {
+        state.hull   = state.hullMax;
+        state.shield = state.shieldMax;
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -299,6 +317,7 @@ export function onPlayerItemPickup(playerSprite, itemSprite) {
     // A fresh key may open doors on this very deck.
     if (def.category === 'quest_key') { applyUnlockedDoors(); }
 
-    showHudMessage('ACQUIRED: ' + def.name.toUpperCase(), '#aaffcc');
+    const verb = def.scope === 'manta' ? 'STOWED' : 'FITTED';
+    showHudMessage(verb + ': ' + def.name.toUpperCase(), '#aaffcc');
     updateHUD();
 }

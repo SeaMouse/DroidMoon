@@ -6,10 +6,12 @@
 // ─────────────────────────────────────────────
 import Phaser from 'phaser';
 import {
-    TILE_SIZE, PLAYER_WEIGHT,
+    TILE_SIZE,
     NODE_CONNECT_DIST, WANDER_BACKTRACK_CHANCE,
     INVINCIBILITY_MS,
     LIFT_HOLD_MS, PIP_MAX,
+    TRANSFER_HOLD_MS, TRANSFER_REACH, TRANSFER_DENY_MS, HOST_EJECT_INVULN_MS,
+    PLAYER_SPRITE_RADIUS, droidClasses,
     FOG_DARKNESS, FOG_DARKNESS_LIT, FOG_COLOUR, LIGHT_MAX_RANGE, CONE_HALF_ANGLE,
     LIGHT_BAND_ERASE_ALPHA, LIGHT_BAND_ERASE_ALPHA_LIT,
     DIM_COLOUR,
@@ -23,7 +25,8 @@ import {
     DEBUG_LOGS
 } from './config.js';
 import { state } from './state.js';
-import { hasQuestItem, maybeDropItem } from './inventory.js';
+import { hasQuestItem, maybeDropItem, applyHostChassis } from './inventory.js';
+import { getPlayerWeight, getHostClass } from './power.js';
 
 // ─────────────────────────────────────────────
 //  TILE HELPERS
@@ -711,7 +714,11 @@ export class Enemy {
         this.sprite         = sprite;
         this.typeName       = typeName;
         this.label          = typeDef.label;
-        this.hp             = opts.hp ?? typeDef.hp;
+        this.classNo        = typeDef.classNo;
+        // A droid's hull is its hit points whoever is driving it, so one
+        // damage scale covers both the player shooting and being shot.
+        this.hp             = opts.hp ?? typeDef.hullMax;
+        this.hpMax          = typeDef.hullMax;
         this.contactDamage  = typeDef.contactDamage;
         this.speed          = typeDef.speed;
         this.detectRange    = typeDef.detectRange;
@@ -1414,6 +1421,296 @@ function activateTerminal(t, time) {
 }
 
 // ─────────────────────────────────────────────
+//  INFLUENCE DEVICE — HOST CHASSIS & TRANSFER
+// ─────────────────────────────────────────────
+//  The player is an influence device wearing a droid. Which droid is
+//  state.playerDroidType; everything visible about the player is derived
+//  from that class here, and the hold-to-transfer gesture below is what
+//  changes it.
+//
+//  Transfer is a *mode*, not a contextual action. Hold the right stick in
+//  (R3) — or T — anywhere on the deck and, after TRANSFER_HOLD_MS, the
+//  device arms. It stays armed for exactly as long as the input is held,
+//  and the next droid you touch while armed is the one you clamp onto.
+//
+//  Arming away from a target is the point: fumbling for a binding while
+//  pressed against a live hostile was the thing that made the old
+//  contact-only hold hard to trigger at all.
+//
+//  The arming phase borrows the terminal pattern — graphics built once and
+//  cleared/refilled per frame, armStart === 0 as the "not holding" latch,
+//  deniedUntil as the re-trigger guard.
+
+export const Transfer = {
+    target:       null,   // Enemy the armed device clamped onto
+    armed:        false,  // transfer mode live — set once the hold completes
+    armStart:     0,      // time the current hold began; 0 = not holding
+    deniedUntil:  0,
+    progressBg:   null,
+    progressFill: null,
+    hintText:     null,   // "hold to arm" / "transfer mode" banner
+    classLabel:   null,   // the player's own 3-digit serial, drawn on the chassis
+};
+
+export function resetTransfer() {
+    Transfer.target      = null;
+    Transfer.armed       = false;
+    Transfer.armStart    = 0;
+    Transfer.deniedUntil = 0;
+    Transfer.progressBg   = null;
+    Transfer.progressFill = null;
+    Transfer.hintText     = null;
+    Transfer.classLabel   = null;
+}
+
+// Repaints the player rig to whatever chassis the device is wearing. The
+// two-layer base/dome rig is kept and simply tinted — every droid on the
+// ship is a numbered sphere, so a tint plus the serial reads correctly and
+// avoids re-tuning the sub-pixel origin trick the cap depends on.
+export function applyHostVisuals(scene) {
+    const host = getHostClass();
+    if (!state.player) { return; }
+
+    state.player.setTint(host.colour);
+    if (state.playerTop) { state.playerTop.setTint(host.colour); }
+
+    // Body size must not follow the texture — it stays the sprite radius so
+    // collision feels identical in every chassis.
+    if (state.player.body && state.player.body.setCircle) {
+        state.player.body.setCircle(PLAYER_SPRITE_RADIUS);
+    }
+
+    if (!Transfer.classLabel && scene) {
+        Transfer.classLabel = scene.add.text(0, 0, '', {
+            fontFamily: 'monospace', fontSize: '9px', fill: '#ffffff',
+            stroke: '#000000', strokeThickness: 2, resolution: 2,
+        }).setOrigin(0.5, 1).setDepth(47);
+    }
+    if (Transfer.classLabel) { Transfer.classLabel.setText(host.classNo); }
+}
+
+// Keeps the serial sitting above the player. Called from postUpdateVisuals
+// for the same reason the cap is: the physics body has synced by then.
+export function updateHostLabel() {
+    if (!Transfer.classLabel || !state.player) { return; }
+    Transfer.classLabel.setPosition(
+        Math.round(state.player.x),
+        Math.round(state.player.y) - PLAYER_SPRITE_RADIUS - 2
+    );
+    Transfer.classLabel.setAlpha(state.player.alpha);
+}
+
+export function createTransferProgress(scene) {
+    Transfer.progressBg = scene.add.graphics();
+    Transfer.progressBg.setScrollFactor(0).setDepth(52).setVisible(false);
+    Transfer.progressFill = scene.add.graphics();
+    Transfer.progressFill.setScrollFactor(0).setDepth(53).setVisible(false);
+
+    // Nothing else on the deck teaches the binding, so the banner does double
+    // duty: it advertises the gesture near a droid and reports the armed
+    // state once the hold completes.
+    Transfer.hintText = scene.add.text(0, 0, '', {
+        fontFamily: 'monospace', fontSize: '7px', fill: '#88ffcc', resolution: 2
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(53).setVisible(false);
+}
+
+// The droid the player is currently touching, if any. Only transferable
+// classes count — the bare 001 device is never a target.
+function findPlayerDroidOverlap() {
+    const player = state.player;
+    if (!player) { return null; }
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const enemy of state.enemies) {
+        const spr = enemy.sprite;
+        if (!spr || !spr.active) { continue; }
+        const typeDef = droidClasses[enemy.typeName];
+        if (!typeDef || typeDef.transferable === false) { continue; }
+
+        const dist = Phaser.Math.Distance.Between(player.x, player.y, spr.x, spr.y);
+        if (dist <= TRANSFER_REACH && dist < bestDist) {
+            best     = enemy;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+
+// Drops out of transfer mode entirely — the hold latch, the armed flag and
+// both bar graphics. The banner is driven separately every frame.
+function disarmTransfer() {
+    Transfer.armStart = 0;
+    Transfer.armed    = false;
+    Transfer.target   = null;
+    if (Transfer.progressBg)   { Transfer.progressBg.setVisible(false); }
+    if (Transfer.progressFill) { Transfer.progressFill.setVisible(false); }
+}
+
+function setTransferBanner(text, colour) {
+    if (!Transfer.hintText) { return; }
+    if (!text) {
+        Transfer.hintText.setVisible(false);
+        return;
+    }
+    Transfer.hintText.setText(text);
+    Transfer.hintText.setColor(colour);
+    Transfer.hintText.setPosition(
+        Math.round(state.scene.scale.width / 2),
+        state.scene.scale.height - 58
+    );
+    Transfer.hintText.setVisible(true);
+}
+
+// Draws the arming bar. Same geometry the terminal hold uses, so the two
+// gestures read as the same kind of action.
+function drawArmProgress(progress) {
+    const barW = 160, barH = 8;
+    const barX = state.scene.scale.width / 2 - barW / 2;
+    const barY = state.scene.scale.height - 60;
+
+    Transfer.progressBg.clear();
+    Transfer.progressBg.fillStyle(0x000000, 0.6);
+    Transfer.progressBg.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+    Transfer.progressBg.lineStyle(1, 0x88ffcc, 0.9);
+    Transfer.progressBg.strokeRect(barX - 2.5, barY - 2.5, barW + 5, barH + 5);
+    Transfer.progressBg.setVisible(true);
+
+    Transfer.progressFill.clear();
+    Transfer.progressFill.fillStyle(0x88ffcc, 1);
+    Transfer.progressFill.fillRect(barX, barY, Math.round(barW * progress), barH);
+    Transfer.progressFill.setVisible(true);
+}
+
+export function updateTransferHold(time, pad) {
+    if (state.gameOver) { return; }
+
+    // Click the right stick in (R3). The stick's *deflection* is the aim axis
+    // and is already shared with lifts and terminals, so the button under it
+    // is the one free input that still reads as "the right stick".
+    const keyDown = !!(state.keys && state.keys.t && state.keys.t.isDown);
+    const padDown = !!(pad && pad.buttons[11] && pad.buttons[11].pressed);
+    const holdInput = keyDown || padDown;
+
+    // The lockout after a resolved transfer also has to swallow the input
+    // that is still held from the attempt that just finished.
+    if (time < Transfer.deniedUntil) {
+        disarmTransfer();
+        setTransferBanner(null);
+        return;
+    }
+
+    if (!holdInput) {
+        if (Transfer.armStart !== 0) { disarmTransfer(); }
+        // With the mode idle, the only thing worth saying is how to start it,
+        // and only when there is something in reach worth starting it for.
+        setTransferBanner(
+            findPlayerDroidOverlap() ? 'HOLD R3 / T — TRANSFER MODE' : null,
+            '#88ffcc'
+        );
+        return;
+    }
+
+    if (Transfer.armStart === 0) { Transfer.armStart = time; }
+
+    const progress = Math.min((time - Transfer.armStart) / TRANSFER_HOLD_MS, 1);
+
+    if (progress < 1) {
+        Transfer.armed = false;
+        drawArmProgress(progress);
+        setTransferBanner('ARMING TRANSFER…', '#88ffcc');
+        return;
+    }
+
+    // Armed. The bar has done its job; from here the banner carries the state
+    // and contact with any droid is what resolves it.
+    Transfer.armed = true;
+    if (Transfer.progressBg)   { Transfer.progressBg.setVisible(false); }
+    if (Transfer.progressFill) { Transfer.progressFill.setVisible(false); }
+
+    const target = findPlayerDroidOverlap();
+    if (!target) {
+        Transfer.target = null;
+        setTransferBanner('TRANSFER MODE — TOUCH A DROID', '#ffee00');
+        return;
+    }
+
+    Transfer.target = target;
+    setTransferBanner(null);
+    disarmTransfer();
+    Transfer.deniedUntil = time + TRANSFER_DENY_MS;
+    openTransferGame(target);
+}
+
+function openTransferGame(enemy) {
+    if (!enemy || !state.enemies.includes(enemy)) { return; }
+
+    // The enemy is identified by index so the paused scene can hand it back
+    // without holding a reference across a scene boundary.
+    state.scene.scene.pause();
+    state.scene.scene.launch('TransferScene', {
+        targetIndex: state.enemies.indexOf(enemy),
+    });
+}
+
+// Applies the outcome of the transfer game. Called by TransferScene as it
+// hands control back.
+export function resolveTransfer(result, enemy) {
+    if (!enemy) { return; }
+
+    const wreckX = state.player ? state.player.x : enemy.sprite.x;
+    const wreckY = state.player ? state.player.y : enemy.sprite.y;
+
+    if (result === 'win') {
+        const gained = droidClasses[enemy.typeName];
+        // The target is neutralised rather than destroyed — no salvage, and
+        // it is not a kill, but the deck is one hostile closer to clear.
+        removeEnemy(enemy, { drop: false, count: false });
+
+        applyHostChassis(enemy.typeName);
+        state.transferCount++;
+        applyHostVisuals(state.scene);
+        flashWreck(wreckX, wreckY, 0x88ffcc);
+        showHudMessage('TRANSFER COMPLETE — ' + gained.classNo + ' ' +
+            gained.label.toUpperCase(), '#88ffcc');
+    } else {
+        // Failure burns out the target and the current host alike.
+        removeEnemy(enemy, { drop: true, count: false });
+        flashWreck(wreckX, wreckY, 0xff4444);
+
+        if (state.playerDroidType === 'droid_001') {
+            showHudMessage('INFLUENCE DEVICE OVERCHARGED', '#ff4444');
+            triggerGameOver();
+            return;
+        }
+
+        applyHostChassis('droid_001');
+        applyHostVisuals(state.scene);
+        showHudMessage('HOST LOST — REVERTING TO 001', '#ff8844');
+    }
+
+    updateHUD();
+}
+
+// A short expanding ring where a chassis burned out. Purely cosmetic.
+function flashWreck(x, y, colour) {
+    if (!state.scene) { return; }
+    const ring = state.scene.add.graphics();
+    ring.setDepth(44);
+    const draw = (r, a) => {
+        ring.clear();
+        ring.lineStyle(2, colour, a);
+        ring.strokeCircle(x, y, r);
+    };
+    draw(4, 1);
+    state.scene.tweens.addCounter({
+        from: 4, to: 34, duration: 420,
+        onUpdate: (tw) => { draw(tw.getValue(), 1 - tw.progress); },
+        onComplete: () => ring.destroy(),
+    });
+}
+
+// ─────────────────────────────────────────────
 //  DECK STATE
 // ─────────────────────────────────────────────
 export function saveDeckState(deckName) {
@@ -1595,6 +1892,10 @@ export function createHUD(scene) {
     const deckLabel = hudText(scene, W - 12, 6,
         deckDef ? deckDef.label : state.currentDeck, 12, '#44aaff').setOrigin(1, 0);
 
+    // Which chassis the influence device is wearing — the single most
+    // important number on screen once transfers are in play.
+    const hostText = hudText(scene, W - 12, 24, '', 11, '#88ffcc').setOrigin(1, 0);
+
     // --- Bottom-right: kill counter chip ---
     const killText = scene.add.text(W - 8, scene.scale.height - 8, 'Destroyed: 0', {
         fontFamily: 'monospace', fontSize: '11px', fill: '#aaffcc',
@@ -1604,7 +1905,7 @@ export function createHUD(scene) {
 
     state.hud = {
         band, barBg, hullFill, shieldFill, hullNum, shieldNum,
-        weaponText, weaponPips, powerPips, deckLabel, killText,
+        weaponText, weaponPips, powerPips, deckLabel, hostText, killText,
         centerX: W / 2,
     };
 
@@ -1657,7 +1958,15 @@ export function updateWeaponText() {
     const h = state.hud;
     if (!h) { return; }
     const w = state.currentWeaponStats;
-    h.weaponText.setText(w ? w.label : 'Blaster');
+    h.weaponText.setText(w ? w.label : 'UNARMED');
+    h.weaponText.setColor(w ? '#ffee00' : '#886666');
+}
+
+export function updateHostText() {
+    const h = state.hud;
+    if (!h || !h.hostText) { return; }
+    const host = getHostClass();
+    h.hostText.setText(host.classNo + ' ' + host.label);
 }
 
 export function updatePowerPips() {
@@ -1680,13 +1989,14 @@ export function updatePowerPips() {
 export function updateKillText() {
     const h = state.hud;
     if (!h) { return; }
-    h.killText.setText('Destroyed: ' + state.killCount);
+    h.killText.setText('Destroyed: ' + state.killCount + '   Taken: ' + state.transferCount);
 }
 
 export function updateHUD() {
     updateHullBar();
     updateShieldBar();
     updateWeaponText();
+    updateHostText();
     updatePowerPips();
     updateKillText();
 }
@@ -1753,7 +2063,9 @@ export function enemyShoot(enemy, time) {
     const weaponDef = weaponTypes[enemy.weaponType];
     if (!weaponDef) { return; }
 
-    if (time < enemy.lastShotTime + weaponDef.cooldown) { return; }
+    // The AI fires on the far slower `aiCooldown`; `cooldown` is the
+    // player-driven rate, which weapon pips scale on top of.
+    if (time < enemy.lastShotTime + weaponDef.aiCooldown) { return; }
     enemy.lastShotTime = time;
 
     const dx = state.player.x - enemy.sprite.x;
@@ -1766,6 +2078,41 @@ export function enemyShoot(enemy, time) {
     });
 }
 
+// Takes a droid off the deck for good. Shared by the shooting path and the
+// transfer path, which differ only in whether salvage is left behind and
+// whether it counts as a kill.
+//
+// state.enemies (the AI objects) and state.enemyGroup (the sprites) are
+// separate lists linked by sprite data, so both have to be settled here:
+// splice the array, then disable and destroy the sprite.
+export function removeEnemy(enemy, { drop = true, count = true } = {}) {
+    // Two bullets can land on the same droid in one frame, and a transfer can
+    // resolve against a droid something else already killed — either way the
+    // second call must not drop salvage or bump a counter again.
+    if (!enemy || !state.enemies.includes(enemy)) { return false; }
+
+    const sprite = enemy.sprite;
+    state.enemies = state.enemies.filter(e => e !== enemy);
+
+    sprite.setActive(false);
+    sprite.setVisible(false);
+    if (sprite.body) { sprite.body.enable = false; }
+
+    // Salvage is left at the wreck before the sprite goes away.
+    if (drop) { maybeDropItem(sprite.x, sprite.y, enemy.typeName); }
+
+    if (count) {
+        state.killCount++;
+        updateKillText();
+    }
+
+    state.scene.time.delayedCall(100, () => {
+        sprite.destroy();
+    });
+    checkDeckClearance();
+    return true;
+}
+
 export function bulletHitEnemy(bullet, enemySprite) {
     const damage = bullet.getData('damage') ?? 1;
     state.playerBullets.deactivate(bullet);
@@ -1776,22 +2123,7 @@ export function bulletHitEnemy(bullet, enemySprite) {
     enemy.hp -= damage;
 
     if (enemy.hp <= 0) {
-        state.enemies = state.enemies.filter(e => e !== enemy);
-
-        enemySprite.setActive(false);
-        enemySprite.setVisible(false);
-        enemySprite.body.enable = false;
-
-        // Salvage is left at the wreck before the sprite goes away.
-        maybeDropItem(enemySprite.x, enemySprite.y, enemy.typeName);
-
-        state.killCount++;
-        updateKillText();
-
-        state.scene.time.delayedCall(100, () => {
-            enemySprite.destroy();
-        });
-        checkDeckClearance();
+        removeEnemy(enemy);
     } else {
         state.scene.tweens.add({
             targets:  enemySprite,
@@ -1825,6 +2157,13 @@ export function applyDamageToPlayer(damage) {
     updateShieldBar();
 
     if (state.hull <= 0) {
+        // A borrowed chassis dying is not the player dying. The host burns
+        // out and the influence device walks away as a fresh 001 — same
+        // bargain as losing a transfer, reached by gunfire instead.
+        if (state.playerDroidType !== 'droid_001') {
+            ejectFromDeadHost();
+            return;
+        }
         triggerGameOver();
         return;
     }
@@ -1841,6 +2180,40 @@ export function applyDamageToPlayer(damage) {
     });
 
     state.scene.time.delayedCall(INVINCIBILITY_MS, () => {
+        state.playerInvincible = false;
+    });
+}
+
+// The borrowed chassis took the killing hit. It burns out where it stood and
+// the influence device continues as a bare 001 at full hull and shields —
+// the same outcome as a lost transfer, so the two failure paths agree.
+//
+// Any armed transfer is dropped: the hold that was in progress belonged to a
+// droid that no longer exists.
+function ejectFromDeadHost() {
+    const lost = getHostClass();
+
+    flashWreck(state.player.x, state.player.y, 0xff8844);
+    disarmTransfer();
+    Transfer.deniedUntil = state.scene.time.now + TRANSFER_DENY_MS;
+
+    applyHostChassis('droid_001');   // refills hull and shield by default
+    applyHostVisuals(state.scene);
+    showHudMessage('HOST ' + lost.classNo + ' DESTROYED — 001 INTACT', '#ff8844');
+    updateHUD();
+
+    // Longer than the ordinary hit grace: the 001 lands in the crossfire that
+    // killed the host and would otherwise be shot again on the next frame.
+    state.playerInvincible = true;
+    state.scene.tweens.add({
+        targets:    state.player,
+        alpha:      0.2,
+        duration:   110,
+        yoyo:       true,
+        repeat:     9,
+        onComplete: () => { state.player.setAlpha(1); }
+    });
+    state.scene.time.delayedCall(HOST_EJECT_INVULN_MS, () => {
         state.playerInvincible = false;
     });
 }
@@ -1863,12 +2236,18 @@ export function onPlayerEnemyCollide(playerSprite, enemySprite) {
     const enemy = enemySprite.getData('entity');
     if (!enemy) { return; }
 
+    // With transfer mode armed, walking into a droid *is* the input. The
+    // touch that opens the transfer game must not also hurt or bounce the
+    // player, and the collision callback can land before update() sees it.
+    if (Transfer.armed) { return; }
+
     const wasInvincible = state.playerInvincible;
     applyDamageToPlayer(enemy.contactDamage);
 
     if (!wasInvincible) {
+        const playerWeight = getPlayerWeight();
         const wEnemy = enemyTypes[enemy.typeName].weight;
-        const total  = PLAYER_WEIGHT + wEnemy;
+        const total  = playerWeight + wEnemy;
 
         const dx   = enemySprite.x - playerSprite.x;
         const dy   = enemySprite.y - playerSprite.y;
@@ -1881,8 +2260,8 @@ export function onPlayerEnemyCollide(playerSprite, enemySprite) {
                                  -ny * PLAYER_KNOCKBACK_SPEED * (wEnemy / total)
         );
 
-        if (wEnemy < PLAYER_WEIGHT) {
-            const pushFactor = (PLAYER_WEIGHT - wEnemy) / PLAYER_WEIGHT;
+        if (wEnemy < playerWeight) {
+            const pushFactor = (playerWeight - wEnemy) / playerWeight;
             enemySprite.setVelocity(
                 nx * pushFactor * ENEMY_PUSH_MAX_SPEED,
                 ny * pushFactor * ENEMY_PUSH_MAX_SPEED

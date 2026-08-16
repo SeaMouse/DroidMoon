@@ -41,6 +41,9 @@ export class TitleScene extends Phaser.Scene {
         this.add.text(cx, 107, 'Use lifts to move between decks.', {
             fontFamily: 'monospace', fontSize: '7px', fill: '#ffffff'
         }).setOrigin(0.5);
+        this.add.text(cx, 116, 'Transfer into a droid to borrow its hull and gun.', {
+            fontFamily: 'monospace', fontSize: '7px', fill: '#88ffcc'
+        }).setOrigin(0.5);
 
         this.add.text(cx, 126, 'Move:          Left stick', {
             fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
@@ -54,9 +57,12 @@ export class TitleScene extends Phaser.Scene {
         this.add.text(cx, 159, 'Lift:          Hold F or right stick on a lift', {
             fontFamily: 'monospace', fontSize: '6px', fill: '#aaaacc'
         }).setOrigin(0.5);
+        this.add.text(cx, 170, 'Transfer mode: Hold R3 / T, then touch a droid', {
+            fontFamily: 'monospace', fontSize: '6px', fill: '#88ffcc'
+        }).setOrigin(0.5);
 
         // --- Level selection ---
-        let yPos = 185;
+        let yPos = 190;
         for (const level of LEVELS) {
             const txt = this.add.text(cx, yPos, level.label, {
                 fontFamily: 'monospace', fontSize: '8px', fill: '#aaaacc'
